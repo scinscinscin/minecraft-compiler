@@ -1,0 +1,10 @@
+function main() {
+  var foo = 1;
+  var bar = 2;
+
+  var baz = foo + bar;
+
+  while while_loop_variable(baz < 10) {
+    baz = baz + 1;
+  }
+}

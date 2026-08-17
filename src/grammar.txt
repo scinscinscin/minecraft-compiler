@@ -1,0 +1,33 @@
+<S>: <PROGRAM>;
+<PROGRAM: program>: (<FUNCTION_DEFINITION_LIST: function_list>)? [EOF];
+<FUNCTION_DEFINITION_LIST: function_definition_list>: <FUNCTION_DEFINITION: function_definition> (<FUNCTION_DEFINITION_LIST: rest>)?;
+<FUNCTION_DEFINITION: function_definition>: 
+  [FUNCTION] [IDENTIFIER: name] [LPAREN] (<PARAMETER_LIST: parameters>)? [RPAREN] [LBRACE] (<STATEMENT_LIST: statements>)? [RBRACE];
+<PARAMETER_LIST: parameter_list>: [IDENTIFIER: name] ([COMMA] <PARAMETER_LIST: rest>)?;
+
+<STATEMENT_LIST: statement_list>: <STATEMENT | VARIABLE_DEFINITION: stmt> (<STATEMENT_LIST: rest>)?;
+<VARIABLE_DEFINITION: variable_definition>: [VAR] [IDENTIFIER: variable_name] [EQUALS] <EXPRESSION: initializer> [SEMICOLON];
+<STATEMENT: statement>: <IF_STATEMENT | WHILE_LOOP | EXPRESSION_STATEMENT | BLOCK_STATEMENT | RETURN_STATEMENT: stmt>;
+<BLOCK_STATEMENT: block_statement>: [LBRACE] (<STATEMENT_LIST: statement_list>)? [RBRACE];
+<IF_STATEMENT: if_statement>: [IF] [LPAREN] <EXPRESSION: condition> [RPAREN] <STATEMENT: body> ([ELSE] <STATEMENT: else_body>)?;
+<WHILE_LOOP: while_loop>: [WHILE] [IDENTIFIER: loop_name] [LPAREN] <EXPRESSION: condition> [RPAREN] <STATEMENT: body>;
+<EXPRESSION_STATEMENT: expression_statement>: <EXPRESSION: expression> [SEMICOLON];
+<RETURN_STATEMENT: return_statement>: [RETURN] <EXPRESSION: expression> [SEMICOLON];
+
+<EXPRESSION: expression>: <ASSIGNMENT_EXPRESSION: expr>;
+<ASSIGNMENT_EXPRESSION: assignment_expr>: ([IDENTIFIER: variable_name] [EQUALS])? <EQUALITY_EXPRESSION: expr>;
+<EQUALITY_EXPRESSION: binary_expr>: <COMPARISON_EXPRESSION: left> ([DOUBLE_EQUALS | BANG_EQUALS: op] <COMPARISON_EXPRESSION: right>)?;
+<COMPARISON_EXPRESSION: binary_expr>: 
+  <BITWISE_OR_EXPRESSION: left> ([LESS_THAN | GREATER_THAN | LESS_THAN_EQUALS | GREATER_THAN_EQUALS: op] <BITWISE_OR_EXPRESSION: right>)?;
+<BITWISE_OR_EXPRESSION: binary_expr>: <BITWISE_AND_EXPRESSION: left> ([PIPE | TILDE_PIPE: op] <BITWISE_OR_EXPRESSION: right>)?;
+<BITWISE_AND_EXPRESSION: binary_expr>: <BITWISE_XOR_EXPRESSION: left> ([AMPERSAND | TILDE_AMPERSAND: op] <BITWISE_AND_EXPRESSION: right>)?;
+<BITWISE_XOR_EXPRESSION: binary_expr>: <TERM_EXPRESSION: left> ([CARAT | TILDE_CARAT: op] <BITWISE_XOR_EXPRESSION: right>)?;
+<TERM_EXPRESSION: binary_expr>: <SHIFT_EXPRESSION: left> ([PLUS | MINUS: op] <TERM_EXPRESSION: right>)?;
+<SHIFT_EXPRESSION: unary_expr>: ([LEFTSHIFT | RIGHTSHIFT: op])? <BITWISE_NOT_EXPRESSION: target>;
+<BITWISE_NOT_EXPRESSION: unary_expr>: ([TILDE: op])? <ENDPOINT: target>;
+
+<ENDPOINT: grouping_expr>: [LPAREN] <EXPRESSION: expr> [RPAREN];
+<ENDPOINT: variable_reference>: [IDENTIFIER: variable_name];
+<ENDPOINT: literal_expr>: [NUMBER: number];
+<ENDPOINT: function_call>: [IDENTIFIER: function_name] [LPAREN] (<ARGUMENT_LIST: argument_list>)? [RPAREN];
+<ARGUMENT_LIST: argument_list>: <EXPRESSION: expr> ([COMMA] <ARGUMENT_LIST: rest>)?;
