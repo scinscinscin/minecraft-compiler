@@ -8,12 +8,14 @@ import { liveliness_analysis, to_ssa } from "./intermediate";
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
 const SOURCE = `function main () {
   var foo = 2;
+  var bar = 3;
 
-  while loop (foo < 10) {
+  if (foo < 10) {
     foo = foo + 2;
   }
 
-  return foo;
+  bar = bar + foo;
+  return bar;
 }`;
 
 async function main() {
@@ -43,8 +45,9 @@ async function main() {
   const intermediate_representation = main.compile();
   const x = to_ssa(intermediate_representation);
   console.log(x);
+  console.log(x.map((b) => b.instructions.map((i) => i.to_stringified())));
 
-  // console.log(liveliness_analysis(x));
+  console.log(liveliness_analysis(x));
 }
 
 main();

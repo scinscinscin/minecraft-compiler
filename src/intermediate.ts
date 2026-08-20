@@ -1,18 +1,31 @@
 import { TokenType } from "./lexer";
 import { FunctionCompilationContext } from "./parser";
+import { color_graph } from "./utils/coloring";
 
 export abstract class IRCode {
-  check_if_redefines_operand(variable_name: string): boolean {
+  check_if_redefines_variable(variable_name: string): boolean {
     return false;
   }
 
   /**
    * This function is called whenever its time to convert to SSA form.
-   * By default it does nothing.
+   * It receives a variable stack manager that tracks the state of variables.
+   * The job is to replace variable references with SSA references.
+   * By default it does nothing and is up to the instruction how they'll utilize it.
    */
   to_ssa(variable_name: string, context: VariableStackManager) {}
 
   abstract to_stringified(): string;
+
+  // Get the operands this instruction expects
+  get_inputs(): Operand[] {
+    return [];
+  }
+
+  // Get what the instruction defines
+  get_outputs(): Operand[] {
+    return [];
+  }
 }
 
 function handle_operand_read(existing: Operand, variable_name: string, context: VariableStackManager) {
@@ -33,17 +46,19 @@ function handle_operand_write(existing: Operand, variable_name: string, context:
 export class Phi extends IRCode {
   target: Operand;
   sources: Operand[] = [];
+  from: BasicBlock[] = [];
 
   constructor(variable_name: string) {
     super();
     this.target = { type: "variable", name: variable_name };
   }
 
-  add_source(name: string, index: number) {
+  add_source(name: string, index: number, block: BasicBlock) {
     this.sources.push({ type: "ssa_variable", name, index });
+    this.from.push(block);
   }
 
-  check_if_redefines_operand(variable_name: string): boolean {
+  check_if_redefines_variable(variable_name: string): boolean {
     if (this.target.type !== "variable") return false;
     return this.target.name === variable_name;
   }
@@ -55,6 +70,10 @@ export class Phi extends IRCode {
   to_stringified() {
     const operands = this.sources.map((x) => stringify_operand(x)).join(", ");
     return `${stringify_operand(this.target)} = phi(${operands})`;
+  }
+
+  get_outputs() {
+    return [this.target];
   }
 }
 
@@ -93,7 +112,11 @@ export class BinaryInstruction extends IRCode {
     return [this.left, this.right];
   }
 
-  check_if_redefines_operand(variable_name: string): boolean {
+  get_outputs() {
+    return [this.target];
+  }
+
+  check_if_redefines_variable(variable_name: string): boolean {
     // if target equals operand, then it is redefined
     if (this.target.type !== "variable") return false;
     if (this.target.name !== variable_name) return false;
@@ -125,6 +148,10 @@ export class UnaryInstruction extends IRCode {
     return [this.left];
   }
 
+  get_outputs() {
+    return [this.target];
+  }
+
   to_ssa(variable_name: string, context: VariableStackManager) {
     this.left = handle_operand_read(this.left, variable_name, context);
     this.target = handle_operand_write(this.target, variable_name, context);
@@ -144,7 +171,15 @@ export class MoveInstruction extends IRCode {
     super();
   }
 
-  check_if_redefines_operand(variable_name: string): boolean {
+  get_inputs() {
+    return [this.source];
+  }
+
+  get_outputs() {
+    return [this.target];
+  }
+
+  check_if_redefines_variable(variable_name: string): boolean {
     // if target equals operand, then it is redefined
     if (this.target.type !== "variable") return false;
     if (this.target.name !== variable_name) return false;
@@ -158,10 +193,6 @@ export class MoveInstruction extends IRCode {
 
   to_stringified() {
     return `${stringify_operand(this.target)} = ${stringify_operand(this.source)}`;
-  }
-
-  get_inputs() {
-    return [this.source];
   }
 }
 
@@ -177,10 +208,18 @@ export class JumpInstruction extends IRCode {
 
 export class ConditionalJump extends IRCode {
   constructor(
-    public readonly expression: Operand,
+    public expression: Operand,
     public readonly label: string,
   ) {
     super();
+  }
+
+  to_ssa(variable_name: string, context: VariableStackManager) {
+    this.expression = handle_operand_write(this.expression, variable_name, context);
+  }
+
+  get_inputs() {
+    return [this.expression];
   }
 
   to_stringified() {
@@ -191,6 +230,10 @@ export class ConditionalJump extends IRCode {
 export class PushInstruction extends IRCode {
   constructor(public value: Operand) {
     super();
+  }
+
+  get_inputs() {
+    return [this.value];
   }
 
   to_ssa(variable_name: string, context: VariableStackManager) {
@@ -215,6 +258,10 @@ export class FunctionCallInstruction extends IRCode {
     return this.operands;
   }
 
+  get_outputs() {
+    return [this.target];
+  }
+
   to_stringified() {
     return `${stringify_operand(this.target)} = ${this.function_name}()`;
   }
@@ -231,6 +278,10 @@ export class FunctionExitInstruction extends IRCode {
 
   to_stringified() {
     return "function_exit";
+  }
+
+  get_inputs() {
+    return [{ type: "return_register" } as Operand];
   }
 }
 
@@ -319,7 +370,7 @@ class BasicBlock {
     this.dominance_tree_children.push(block);
   }
 
-  set_phi(variable_name: string, top: number) {
+  set_phi(variable_name: string, top: number, block: BasicBlock) {
     // look for phi node inside instructions that set variable_name
     for (const instruction of this.instructions) {
       if (
@@ -327,7 +378,7 @@ class BasicBlock {
         ((instruction.target.type === "variable" && instruction.target.name === variable_name) ||
           (instruction.target.type === "ssa_variable" && instruction.target.name === variable_name))
       ) {
-        instruction.add_source(variable_name, top);
+        instruction.add_source(variable_name, top, block);
       }
     }
   }
@@ -340,7 +391,7 @@ class BasicBlock {
 
     // for each succeeding block in the cfg, tell their phi nodes that redefine variable
     const top = context.get_top();
-    for (const child of this.successors) child.set_phi(variable_name, top);
+    for (const child of this.successors) child.set_phi(variable_name, top, this);
 
     // iterate through the children
     for (const child of this.dominance_tree_children) child.dfs(variable_name, context);
@@ -565,7 +616,7 @@ export function to_ssa(context: FunctionCompilationContext) {
     // Stop when the computed frontier is the same as the previous frontier
     inner: while (true) {
       const redefining_blocks = cfg.filter((block) =>
-        block.instructions.some((x) => x.check_if_redefines_operand(variable)),
+        block.instructions.some((x) => x.check_if_redefines_variable(variable)),
       );
       const redefining_blocks_indices = redefining_blocks.map((x) => cfg.indexOf(x));
       const combined_frontier = redefining_blocks_indices.flatMap((x) => frontier[x]);
@@ -631,7 +682,225 @@ function array_equals(a: number[], b: number[]) {
 }
 
 type OperandSet = Operand[];
-export function liveliness_analysis(cfg: BasicBlock[]) {}
+export function liveliness_analysis(cfg: BasicBlock[]) {
+  // Need to compute USE and DEF per block
+  // Def - variables defined in B
+  // Use - variables used before being defined in B
+  const use_def: { use: OperandSet; def: OperandSet; phi_uses: OperandSet }[] = [];
+  for (let i = 0; i < cfg.length; i++) {
+    const block = cfg[i];
+    const def: OperandSet = [];
+    const use: OperandSet = [];
+    const phi_uses: OperandSet = [];
+
+    for (const instruction of block.instructions) {
+      // check if the instruction defines a variable
+      const defined = instruction.get_outputs();
+      const inputs = instruction.get_inputs();
+
+      // add inputs to use if not present in def
+      for (const input of inputs) {
+        if (input.type !== "literal") if (!def.some((x) => compare_operands(x, input))) use.push(input);
+      }
+
+      // add defined to def if not present
+      for (const defined_variable of defined)
+        if (defined_variable.type !== "literal")
+          if (!def.some((x) => compare_operands(x, defined_variable))) def.push(defined_variable);
+
+      if (instruction instanceof Phi) {
+        // add phi uses to phi uses
+        for (const phi_use of instruction.sources)
+          if (phi_use.type !== "literal") if (!def.some((x) => compare_operands(x, phi_use))) phi_uses.push(phi_use);
+      }
+    }
+
+    use_def[i] = { use, def, phi_uses };
+  }
+
+  // Run fixed point iteration to determine the live in and live out of each block
+  // LIVE_OUT = union of live in of the successors
+  // LIVE_IN = USE(B) UNION (LIVE_OUT(B) - DEF(B))
+  const LIVE_IN = [] as OperandSet[];
+  const LIVE_OUT = [] as OperandSet[];
+
+  for (const block of cfg) {
+    LIVE_IN.push([]);
+    LIVE_OUT.push([]);
+  }
+
+  while (true) {
+    let changed = false;
+
+    const change_live_in = (index: number, live_in: OperandSet) => {
+      const current = LIVE_IN[index];
+      if (are_operand_sets_equal(current, live_in)) return;
+
+      LIVE_IN[index] = live_in;
+      changed = true;
+    };
+
+    const change_live_out = (index: number, live_out: OperandSet) => {
+      const current = LIVE_OUT[index];
+      if (are_operand_sets_equal(current, live_out)) return;
+
+      LIVE_OUT[index] = live_out;
+      changed = true;
+    };
+
+    // Phi operands are handled when computing the contribution of a successor to a predecessor's live out
+    for (let i = 0; i < cfg.length; i++) {
+      const block = cfg[i];
+      const uses = use_def[i].use;
+      const defs = use_def[i].def;
+
+      // LIVE OUT = union of live in of the successors
+      const successor_indices = block.successors.map((x) => cfg.indexOf(x));
+      const live_out = combine_operand_sets_n(successor_indices.map((x) => LIVE_IN[x]));
+
+      for (const next of block.successors) {
+        // if the successor contains phi nodes, add the operand that would be chosen when coming from B
+        for (const instruction of next.instructions) {
+          if (instruction instanceof Phi) {
+            for (let j = 0; j < instruction.sources.length; j++) {
+              const operand = instruction.sources[j];
+              if (instruction.from[j] === block) {
+                if (!live_out.some((x) => compare_operands(x, operand))) {
+                  live_out.push(operand);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // LIVE IN = USE(B) UNION (LIVE_OUT(B) - DEF(B))
+      const without_defs = live_out.filter((x) => !defs.some((y) => compare_operands(x, y)));
+      const live_in = combine_operand_sets_n([uses, without_defs]);
+
+      change_live_in(i, live_in);
+      change_live_out(i, live_out);
+    }
+
+    if (changed == false) break;
+    else continue;
+  }
+
+  console.log(LIVE_OUT);
+
+  const graph = new Graph();
+
+  for (let i = 0; i < cfg.length; i++) {
+    const block = cfg[i];
+    let live = LIVE_OUT[i].filter((x) => x.type !== "literal");
+
+    for (const instruction of block.instructions.toReversed()) {
+      // Determine what is defined and what is used in this instruction
+      const defined = instruction.get_outputs().filter((x) => x.type !== "literal");
+      const used = instruction.get_inputs().filter((x) => x.type !== "literal");
+
+      // Add all of defined, used, and live as nodes
+      graph.create_nodes([...defined, ...used, ...live]);
+
+      // Add interference for definitions
+      for (const defined_variable of defined) {
+        for (const live_variable of live) {
+          // add an edge between live_variable and defined_variable
+          graph.create_edge(defined_variable, live_variable);
+        }
+      }
+
+      // Update the liveset
+      // live -= DEF(instruction)
+      // live += USE(instruction)
+      for (const defined_variable of defined) {
+        // remove defined variables from live
+        live = live.filter((x) => !compare_operands(x, defined_variable));
+      }
+
+      for (const used_variable of used) {
+        // add used variables to live
+        // If live doesn't contain used variable, add it
+        if (!live.some((x) => compare_operands(x, used_variable))) live.push(used_variable);
+      }
+    }
+  }
+
+  console.log(graph);
+  const adj_list = {} as { [key: string]: string[] };
+  for (const node in graph.adj_list) adj_list[node.toString()] = graph.adj_list[node].map((x) => x.toString());
+  const color_map = color_graph(adj_list, 7);
+
+  console.log(color_map);
+}
+
+class Graph {
+  adj_list = [] as number[][];
+
+  last_defined = -1;
+  list: Operand[] = [];
+  _index_of(operand: Operand) {
+    for (let i = 0; i < this.list.length; i++) {
+      if (compare_operands(this.list[i], operand)) return i;
+    }
+
+    return -1;
+  }
+
+  get_index_of_operand(operand: Operand) {
+    // get the index from list
+    const index = this._index_of(operand);
+    if (index !== -1) return index;
+
+    // define next
+    const next = ++this.last_defined;
+    this.list[next] = operand;
+
+    this.adj_list[next] = [];
+    return next;
+  }
+
+  create_nodes(operands: Operand[]) {
+    for (const operand of operands) this.get_index_of_operand(operand);
+  }
+
+  create_edge(a: Operand, b: Operand) {
+    if (compare_operands(a, b)) return;
+
+    console.log("Adding", a, b);
+    const index_a = this.get_index_of_operand(a);
+    const index_b = this.get_index_of_operand(b);
+
+    this.adj_list[index_a].push(index_b);
+    this.adj_list[index_b].push(index_a);
+  }
+
+  get_adj_list() {
+    return this.adj_list;
+  }
+}
+
+function combine_operand_sets_n(sets: OperandSet[]) {
+  if (sets.length === 0) return [];
+
+  const [first, ...rest] = sets;
+  const ret = [...first] as OperandSet;
+
+  for (const set of rest) {
+    for (const operand of set) {
+      const has_operand = ret.some((x) => compare_operands(x, operand));
+      if (!has_operand) ret.push(operand);
+    }
+  }
+
+  return ret;
+}
+
+function intersection(a: OperandSet, b: OperandSet) {
+  const ret = [] as OperandSet;
+  for (const operand of a) if (b.some((x) => compare_operands(x, operand))) ret.push(operand);
+  return ret;
+}
 
 function combine_operand_sets(a: OperandSet, b: OperandSet) {
   const ret = [...a] as OperandSet;

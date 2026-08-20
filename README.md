@@ -15,3 +15,10 @@ Things that have been done:
       1. For each variable, find all blocks that define it
       2. Put phi nodes in the iterated dominance frontier of those blocks
       3. Build dominance tree and perform DFS with stack to add operands to phi nodes and replace variable invocations with SSA ones.
+4. Perform liveliness analysis
+   1. Compute USE and DEF per block
+   2. Compute the live in and live out of each block
+   3. Construct the register interference graph
+      1. Traverse each basic block backwards with `live` starting as its live out
+      2. For each instruction that defines a variable, add an edge from every operand in live to the defined variable
+      3. Remove the defined variable from live and add the operands it uses

@@ -1,5 +1,5 @@
 // Implementation of the Chaitin algorithm for coloring graphs
-type AdjList = {
+export type AdjList = {
   [key: string]: string[];
 };
 
@@ -18,7 +18,7 @@ function remove_key_from_graph(adj_list: AdjList, key_to_remove: string) {
  * @param graph Adjacency list, assuems that the graph is valid, undirected
  * @param n The number of colors
  */
-function color_graph(graph: AdjList, n: number) {
+export function color_graph(graph: AdjList, n: number) {
   let current_graph = graph;
   const order = [] as string[];
   const bad_nodes = [] as string[];
@@ -96,17 +96,17 @@ function color_graph(graph: AdjList, n: number) {
 //   4,
 // );
 
-const mapping = color_graph(
-  {
-    a: ["b", "c", "d"],
-    b: ["a", "c", "d", "e", "f"],
-    c: ["a", "b", "d", "e"],
-    d: ["a", "b", "c"],
-    e: ["b", "c", "f"],
-    f: ["b", "e"],
-    g: [],
-  },
-  3,
-);
+// const mapping = color_graph(
+//   {
+//     a: ["b", "c", "d"],
+//     b: ["a", "c", "d", "e", "f"],
+//     c: ["a", "b", "d", "e"],
+//     d: ["a", "b", "c"],
+//     e: ["b", "c", "f"],
+//     f: ["b", "e"],
+//     g: [],
+//   },
+//   3,
+// );
 
-console.log(mapping);
+// console.log(mapping);
