@@ -1,20 +1,19 @@
 import { Token as SlexToken } from "@scinorandex/slex";
 import { TokenMetadata, TokenType } from "./lexer";
 import {
-  Addressable,
-  BinaryOperation,
+  BinaryInstruction,
+  ConditionalJump,
+  FunctionCallInstruction,
+  FunctionExitInstruction,
   GotoLabel,
-  IntermediateBytecode,
-  Jump,
-  LoadConstant,
-  LoadMemory,
-  Move,
-  Noop,
-  Pop,
-  Push,
-  StoreMemory,
-  UnaryOperation,
-} from "./bytecode";
+  IRCode,
+  JumpInstruction,
+  MoveInstruction,
+  Operand,
+  PushInstruction,
+  ReturnInstruction,
+  UnaryInstruction,
+} from "./intermediate";
 
 type Token = SlexToken<TokenType, TokenMetadata>;
 
@@ -44,54 +43,29 @@ export class ListNode<T> extends BaseNode {
   }
 }
 
-const GPR_COUNT = 7;
-class FunctionCompilationContext {
-  // number here is the offset to the base pointer
-  variables = {} as { [key: string]: number };
-  variable_count = 0;
-  name: string;
+export class FunctionCompilationContext {
+  constructor(public readonly function_name: string) {}
 
-  constructor(parameters: string[], name: string) {
-    this.name = name;
-
-    for (let i = 0; i < parameters.length; i++) {
-      const parameter_name = parameters[i];
-      let offset = i + 2;
-      this.variables[parameter_name] = offset;
-    }
+  emitted = [] as IRCode[];
+  emit(ir_code: IRCode) {
+    this.emitted.push(ir_code);
   }
 
-  set_variable(name: string) {
-    if (this.variables[name] != null) throw new Error(`Variable or parameter ${name} already exists`);
-    else this.variables[name] = ++this.variable_count * -1; // stack grows downwards
+  used_registers = 0;
+  get_next_temp_reg(): Operand {
+    return { type: "temp_reg", index: this.used_registers++ };
   }
 
-  get_variable(name: string) {
-    if (this.variables[name] == null) throw new Error(`Variable or parameter ${name} does not exist`);
-    return this.variables[name];
+  condition_label = 0;
+  get_next_condition_label() {
+    return `condition${this.condition_label++}`;
   }
 
-  bytecode = [] as IntermediateBytecode[];
-  emit(ir_bytecode: IntermediateBytecode) {
-    this.bytecode.push(ir_bytecode);
-  }
+  variables: string[] = [];
+  define_variable(name: string) {
+    if (this.variables.includes(name)) throw new Error(`Variable ${name} already defined`);
 
-  last_allocated = -1;
-  get_register(): Addressable & { type: "gpr" } {
-    return { type: "gpr", index: ++this.last_allocated % GPR_COUNT };
-  }
-
-  last_goto_label = -1;
-  get_goto_label(): string {
-    return `label_${++this.last_goto_label}`;
-  }
-
-  get_rewriter() {
-    const index = this.bytecode.length;
-    this.emit(new Noop());
-    return (replacement: IntermediateBytecode) => {
-      this.bytecode[index] = replacement;
-    };
+    this.variables.push(name);
   }
 }
 
@@ -104,42 +78,21 @@ export class FunctionDefinition extends BaseNode {
     super();
   }
 
-  compile(): IntermediateBytecode[] {
-    const parameters = this.parameters.get_items_reversed();
-    const context = new FunctionCompilationContext(
-      parameters.map((x) => x.lexeme),
-      this.name.lexeme,
-    );
+  // Compiles the statements into a list of IR Code
+  compile() {
+    const context = new FunctionCompilationContext(this.name.lexeme);
 
-    context.emit(new GotoLabel(this.name.lexeme + "_start", true)); // add entry point for function
-    context.emit(new Push({ type: "base" })); // save the current base pointer
-    context.emit(new Move({ type: "stack" }, { type: "base" })); // set base pointer to top of stack
-
-    // get the stub for the code that can move the stack pointer to allocate variables
-    const var_count = context.get_rewriter();
-
-    for (const stmt of this.statements.get_items_reversed()) stmt.compile(context);
-
+    context.emit(new GotoLabel(this.name.lexeme + "_start"));
+    for (const statement of this.statements.get_items_reversed()) statement.emit_ir(context);
     context.emit(new GotoLabel(this.name.lexeme + "_end"));
-    context.emit(new Move({ type: "base" }, { type: "stack" })); // set stack pointer to top of base pointer again
-    context.emit(new Pop({ type: "base" }));
-    context.emit(new Pop({ type: "ip" }));
+    context.emit(new FunctionExitInstruction());
 
-    var_count(
-      new BinaryOperation(
-        "+",
-        { type: "stack" },
-        { type: "stack" },
-        { type: "constant", value: context.variable_count },
-      ),
-    );
-
-    return context.bytecode;
+    return context;
   }
 }
 
 export abstract class StatementNode extends BaseNode {
-  abstract compile(context: FunctionCompilationContext): void;
+  abstract emit_ir(context: FunctionCompilationContext): void;
 }
 
 export class VariableDefinition extends StatementNode {
@@ -150,17 +103,11 @@ export class VariableDefinition extends StatementNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    // need to compile the initializer first
-    context.set_variable(this.name.lexeme);
-    const expr = this.initializer.compile(context);
-    context.emit(
-      new StoreMemory(expr, {
-        type: "indirect_reference",
-        reg: { type: "base" },
-        offset: context.get_variable(this.name.lexeme),
-      }),
-    );
+  emit_ir(context: FunctionCompilationContext) {
+    context.define_variable(this.name.lexeme);
+
+    const destination: Operand = { type: "variable", name: this.name.lexeme };
+    this.initializer.emit_ir(context, destination);
   }
 }
 
@@ -173,22 +120,27 @@ export class IfStatement extends StatementNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    const label_base = context.get_goto_label();
+  emit_ir(context: FunctionCompilationContext) {
+    const prefix = context.get_next_condition_label();
+    const true_label = prefix + "_true";
+    const false_label = prefix + "_false";
+    const finished_label = prefix + "_end";
 
-    // the flag register will have whether we're going to jump or not
-    const condition = this.condition.compile(context);
+    context.emit(new ConditionalJump(this.condition.emit_ir(context), true_label));
+    if (this.else_body != null) context.emit(new JumpInstruction(false_label));
+    else context.emit(new JumpInstruction(finished_label));
 
-    context.emit(new Jump("zero", label_base + (this.else_body == null ? "_finished" : "_else")));
-    this.body.compile(context);
+    context.emit(new GotoLabel(true_label));
+    this.body.emit_ir(context);
 
     if (this.else_body != null) {
-      context.emit(new Jump("unconditional", label_base + "_finished"));
-      context.emit(new GotoLabel(label_base + "_else"));
-      this.else_body.compile(context);
+      context.emit(new JumpInstruction(finished_label));
+      context.emit(new GotoLabel(false_label));
+      this.else_body.emit_ir(context);
+      // context.emit(new JumpInstruction(finished_label));
     }
 
-    context.emit(new GotoLabel(label_base + "_finished"));
+    context.emit(new GotoLabel(finished_label));
   }
 }
 
@@ -201,17 +153,20 @@ export class WhileLoop extends StatementNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    /**
-     * Go back to condition
-     * Check iv valid, if not go to finished, else continue to body.
-     */
-    context.emit(new GotoLabel(this.loop_name.lexeme + "_condition"));
-    this.condition.compile(context);
-    context.emit(new Jump("zero", this.loop_name.lexeme + "_finished"));
-    this.body.compile(context);
-    context.emit(new Jump("unconditional", this.loop_name.lexeme + "_condition"));
-    context.emit(new GotoLabel(this.loop_name.lexeme + "_finished"));
+  emit_ir(context: FunctionCompilationContext) {
+    const body_label = this.loop_name.lexeme + "_body";
+    const finished_label = this.loop_name.lexeme + "_end";
+    const condition_label = this.loop_name.lexeme + "_condition";
+
+    context.emit(new GotoLabel(condition_label));
+    context.emit(new ConditionalJump(this.condition.emit_ir(context), body_label));
+    context.emit(new JumpInstruction(finished_label));
+
+    context.emit(new GotoLabel(body_label));
+    this.body.emit_ir(context);
+    context.emit(new JumpInstruction(condition_label));
+
+    context.emit(new GotoLabel(finished_label));
   }
 }
 
@@ -220,8 +175,10 @@ export class BlockStatement extends StatementNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    for (const stmt of this.statements.get_items_reversed()) stmt.compile(context);
+  emit_ir(context: FunctionCompilationContext) {
+    for (const statement of this.statements.get_items_reversed()) {
+      statement.emit_ir(context);
+    }
   }
 }
 
@@ -230,10 +187,11 @@ export class ReturnStatement extends StatementNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    const expr = this.expression.compile(context);
-    context.emit(new Move(expr, { type: "gpr", index: 0 }));
-    context.emit(new Jump("unconditional", context.name + "_end"));
+  emit_ir(context: FunctionCompilationContext) {
+    const destination = this.expression.emit_ir(context);
+    context.emit(new MoveInstruction({ type: "return_register" }, destination));
+    context.emit(new JumpInstruction(context.function_name + "_end"));
+    // context.emit(new ReturnInstruction(destination));
   }
 }
 
@@ -242,13 +200,13 @@ export class ExpressionStatement extends StatementNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    this.expression.compile(context);
+  emit_ir(context: FunctionCompilationContext) {
+    this.expression.emit_ir(context);
   }
 }
 
 export abstract class ExpressionNode extends BaseNode {
-  abstract compile(context: FunctionCompilationContext): Addressable & { type: "gpr" };
+  abstract emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand): Operand;
 }
 
 export class BinaryExpression extends ExpressionNode {
@@ -260,17 +218,14 @@ export class BinaryExpression extends ExpressionNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    // We need to stash and pop the left value because function calls can clobber registers
-    context.emit(new Push(this.left.compile(context)));
-    const right = this.right.compile(context);
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const destination = preferred_destination ?? context.get_next_temp_reg();
 
-    const unstash = context.get_register();
-    context.emit(new Pop(unstash));
-    const output = context.get_register();
+    const left = this.left.emit_ir(context);
+    const right = this.right.emit_ir(context);
 
-    context.emit(new BinaryOperation(this.op.lexeme, output, unstash, right));
-    return output;
+    context.emit(new BinaryInstruction(destination, left, this.op.type, right));
+    return destination;
   }
 }
 
@@ -282,12 +237,11 @@ export class UnaryExpression extends ExpressionNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    const target = this.target.compile(context);
-    const output = context.get_register();
-
-    context.emit(new UnaryOperation(this.op.lexeme, output, target));
-    return output;
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const destination = preferred_destination ?? context.get_next_temp_reg();
+    const left = this.target.emit_ir(context);
+    context.emit(new UnaryInstruction(destination, left, this.op.type));
+    return destination;
   }
 }
 
@@ -299,12 +253,13 @@ export class AssignmentExpression extends ExpressionNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    // get the memory location of the variable\
-    const expr = this.expr.compile(context);
-    const offset = context.get_variable(this.variable_name.lexeme);
-    context.emit(new StoreMemory(expr, { type: "indirect_reference", reg: { type: "base" }, offset }));
-    return expr;
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const destination: Operand = { type: "variable", name: this.variable_name.lexeme };
+    this.expr.emit_ir(context, destination);
+    if (preferred_destination == null) return destination;
+
+    context.emit(new MoveInstruction(preferred_destination, destination));
+    return preferred_destination;
   }
 }
 
@@ -313,8 +268,8 @@ export class GroupingExpression extends ExpressionNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    return this.expr.compile(context);
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    return this.expr.emit_ir(context, preferred_destination);
   }
 }
 
@@ -323,10 +278,12 @@ export class LiteralExpression extends ExpressionNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    const output = context.get_register();
-    context.emit(new LoadConstant(parseInt(this.number.lexeme), output));
-    return output;
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand): Operand {
+    const ret = { type: "literal", value: parseInt(this.number.lexeme) } as Operand;
+    if (preferred_destination == null) return ret;
+
+    context.emit(new MoveInstruction(preferred_destination, ret));
+    return preferred_destination;
   }
 }
 
@@ -338,31 +295,18 @@ export class FunctionCall extends ExpressionNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext): Addressable & { type: "gpr" } {
-    const parameter_expressions = this.args.get_items();
-    const arity = parameter_expressions.length;
-
-    for (const parameter_expr of parameter_expressions) {
-      const reg = parameter_expr.compile(context);
-      context.emit(new Push(reg));
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const args = this.args.get_items_reversed();
+    const operands = [] as Operand[];
+    for (const arg of args) {
+      const dest = arg.emit_ir(context);
+      operands.push(dest);
+      context.emit(new PushInstruction(dest));
     }
 
-    // calculate the return address
-    const current_ip = context.get_register();
-    const return_address = context.get_register();
-
-    context.emit(new Move({ type: "ip" }, current_ip));
-    context.emit(new BinaryOperation("+", return_address, current_ip, { type: "constant", value: 4 }));
-    context.emit(new Push(return_address));
-
-    // enter the function
-    context.emit(new GotoLabel(this.func_name.lexeme + "_start"));
-
-    // deallocate the stack
-    context.emit(new BinaryOperation("-", { type: "stack" }, { type: "stack" }, { type: "constant", value: arity }));
-
-    // return first register, which contains the value
-    return { type: "gpr", index: 0 };
+    const destination = preferred_destination ?? context.get_next_temp_reg();
+    context.emit(new FunctionCallInstruction(destination, operands, this.func_name.lexeme));
+    return destination;
   }
 }
 
@@ -371,11 +315,12 @@ export class VariableReference extends ExpressionNode {
     super();
   }
 
-  compile(context: FunctionCompilationContext) {
-    const offset = context.get_variable(this.name.lexeme);
-    const ret = context.get_register();
-    context.emit(new LoadMemory({ type: "indirect_reference", reg: { type: "base" }, offset }, ret));
-    return ret;
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const ret = { type: "variable", name: this.name.lexeme } as Operand;
+    if (preferred_destination == null) return ret;
+
+    context.emit(new MoveInstruction(preferred_destination, ret));
+    return preferred_destination;
   }
 }
 
