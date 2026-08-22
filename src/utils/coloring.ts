@@ -83,30 +83,4 @@ export function color_graph(graph: AdjList, n: number) {
   return { bad_nodes, color_map };
 }
 
-// const mapping = color_graph(
-//   {
-//     a: ["b", "d", "f", "g"],
-//     b: ["a", "c", "d", "e"],
-//     c: ["b", "d", "e"],
-//     d: ["a", "b", "c", "f", "g"],
-//     e: ["b", "c", "f", "g"],
-//     f: ["a", "d", "e", "g"],
-//     g: ["a", "d", "f"],
-//   },
-//   4,
-// );
-
-// const mapping = color_graph(
-//   {
-//     a: ["b", "c", "d"],
-//     b: ["a", "c", "d", "e", "f"],
-//     c: ["a", "b", "d", "e"],
-//     d: ["a", "b", "c"],
-//     e: ["b", "c", "f"],
-//     f: ["b", "e"],
-//     g: [],
-//   },
-//   3,
-// );
-
-// console.log(mapping);
+export type ChaitinOutput = ReturnType<typeof color_graph>;

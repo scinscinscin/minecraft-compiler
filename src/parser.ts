@@ -44,7 +44,10 @@ export class ListNode<T> extends BaseNode {
 }
 
 export class FunctionCompilationContext {
-  constructor(public readonly function_name: string) {}
+  constructor(
+    public readonly function_name: string,
+    public readonly parameters: string[],
+  ) {}
 
   emitted = [] as IRCode[];
   emit(ir_code: IRCode) {
@@ -80,7 +83,8 @@ export class FunctionDefinition extends BaseNode {
 
   // Compiles the statements into a list of IR Code
   compile() {
-    const context = new FunctionCompilationContext(this.name.lexeme);
+    const parameters = this.parameters.get_items_reversed().map((x) => x.lexeme);
+    const context = new FunctionCompilationContext(this.name.lexeme, parameters);
 
     context.emit(new GotoLabel(this.name.lexeme + "_start"));
     for (const statement of this.statements.get_items_reversed()) statement.emit_ir(context);
@@ -254,6 +258,9 @@ export class AssignmentExpression extends ExpressionNode {
   }
 
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const is_parameter = context.parameters.includes(this.variable_name.lexeme);
+    if (is_parameter) throw new Error("Invariant: Cannot assign to a parameter");
+
     const destination: Operand = { type: "variable", name: this.variable_name.lexeme };
     this.expr.emit_ir(context, destination);
     if (preferred_destination == null) return destination;
@@ -279,7 +286,7 @@ export class LiteralExpression extends ExpressionNode {
   }
 
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand): Operand {
-    const ret = { type: "literal", value: parseInt(this.number.lexeme) } as Operand;
+    const ret: Operand = { type: "literal", is_parameter: false, value: parseInt(this.number.lexeme) };
     if (preferred_destination == null) return ret;
 
     context.emit(new MoveInstruction(preferred_destination, ret));
@@ -316,7 +323,12 @@ export class VariableReference extends ExpressionNode {
   }
 
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
-    const ret = { type: "variable", name: this.name.lexeme } as Operand;
+    const parameter_index = context.parameters.indexOf(this.name.lexeme);
+    const ret: Operand =
+      parameter_index !== -1
+        ? { type: "literal", is_parameter: true, value: parameter_index }
+        : { type: "variable", name: this.name.lexeme };
+
     if (preferred_destination == null) return ret;
 
     context.emit(new MoveInstruction(preferred_destination, ret));

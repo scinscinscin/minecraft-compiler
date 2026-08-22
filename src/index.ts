@@ -3,12 +3,13 @@ import path from "path";
 import { lexerGenerator, TokenMetadata, TokenType, toStringifiedTokenType } from "./lexer";
 import { buildProductions, Sparse } from "@scinorandex/sparse";
 import { BaseNode, Program, Reducers } from "./parser";
-import { liveliness_analysis, to_ssa } from "./intermediate";
+import { BasicBlock, IRCode, liveliness_analysis, to_ssa } from "./intermediate";
+import { compile } from "./compiler";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const SOURCE = `function main () {
+const SOURCE = `function main (argc) {
   var foo = 2;
-  var bar = 3;
+  var bar = argc;
 
   if (foo < 10) {
     foo = foo + 2;
@@ -43,11 +44,18 @@ async function main() {
   if (main == null) throw new Error("Invariant: Main function should not be null. ");
 
   const intermediate_representation = main.compile();
-  const x = to_ssa(intermediate_representation);
-  console.log(x);
-  console.log(x.map((b) => b.instructions.map((i) => i.to_stringified())));
+  const ssa_representation = to_ssa(intermediate_representation);
+  const { cfg, graph } = liveliness_analysis(ssa_representation);
+  pretty_print(ssa_representation);
 
-  console.log(liveliness_analysis(x));
+  const compiled = compile(intermediate_representation, cfg, graph);
+  for (const machine_code of compiled.emitted) {
+    console.log(machine_code.to_stringified());
+  }
+}
+
+function pretty_print(x: BasicBlock[]) {
+  for (const b of x) console.log(b.instructions.map((i) => i.to_stringified()));
 }
 
 main();

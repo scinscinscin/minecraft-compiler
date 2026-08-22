@@ -1,3 +1,14 @@
+import {
+  BinaryMachineInstruction,
+  ConditionalJumpMachineInstruction,
+  GotoLabelMachineInstruction,
+  JumpMachineInstruction,
+  MoveMachineInstruction,
+  PopMachineInstruction,
+  PushMachineInstruction,
+  RelocatableUnit,
+  UnaryMachineInstruction,
+} from "./compiler";
 import { TokenType } from "./lexer";
 import { FunctionCompilationContext } from "./parser";
 import { color_graph } from "./utils/coloring";
@@ -26,6 +37,8 @@ export abstract class IRCode {
   get_outputs(): Operand[] {
     return [];
   }
+
+  abstract to_machine_code(context: RelocatableUnit): void;
 }
 
 function handle_operand_read(existing: Operand, variable_name: string, context: VariableStackManager) {
@@ -75,6 +88,8 @@ export class Phi extends IRCode {
   get_outputs() {
     return [this.target];
   }
+
+  to_machine_code(context: RelocatableUnit) {}
 }
 
 export class GotoLabel extends IRCode {
@@ -85,12 +100,38 @@ export class GotoLabel extends IRCode {
   to_stringified() {
     return `${this.label}:`;
   }
+
+  to_machine_code(context: RelocatableUnit) {
+    // If we're emitting a goto label, we need to check if there's new predecessors
+    // Get the basic block that this label is associated with
+    const lookup_result = context.get_basic_block(this.label);
+    if (lookup_result != null) {
+      const [basic_block_index, basic_block] = lookup_result;
+      const new_predecesors = context.edge_mapping.find((x) => x.basic_block === basic_block);
+
+      if (new_predecesors != null) {
+        for (let i = 0; i < new_predecesors.new_predecessors.length; i++) {
+          const new_predecessor = new_predecesors.new_predecessors[i];
+          const from = new_predecessor.predecessor;
+          const from_index = context.basic_blocks.indexOf(from);
+
+          // Emit new label, then the instructions, then the jump
+          const predecessor_label = `__edge_${from_index}_${basic_block_index}__`;
+          context.emit(new GotoLabelMachineInstruction(predecessor_label));
+          for (const instruction of new_predecessor.associations) instruction.to_machine_code(context);
+          context.emit(new JumpMachineInstruction(this.label));
+        }
+      }
+    }
+
+    context.emit(new GotoLabelMachineInstruction(this.label));
+  }
 }
 
 export type Operand =
   | { type: "variable"; name: string }
   | { type: "temp_reg"; index: number }
-  | { type: "literal"; value: number }
+  | { type: "literal"; is_parameter: boolean; value: number }
   | { type: "ssa_variable"; name: string; index: number }
   | { type: "return_register" };
 
@@ -133,6 +174,13 @@ export class BinaryInstruction extends IRCode {
     const op = TokenType[this.op];
     return `${stringify_operand(this.target)} = ${stringify_operand(this.left)} ${op} ${stringify_operand(this.right)}`;
   }
+
+  to_machine_code(context: RelocatableUnit) {
+    const left = context.to_machine_operand(this.left);
+    const right = context.to_machine_operand(this.right);
+    const target = context.to_machine_operand(this.target);
+    context.emit(new BinaryMachineInstruction(target, left, right, this.op));
+  }
 }
 
 export class UnaryInstruction extends IRCode {
@@ -160,6 +208,12 @@ export class UnaryInstruction extends IRCode {
   to_stringified() {
     const op = TokenType[this.op];
     return `${stringify_operand(this.target)} = ${stringify_operand(this.left)} ${op}`;
+  }
+
+  to_machine_code(context: RelocatableUnit) {
+    const left = context.to_machine_operand(this.left);
+    const target = context.to_machine_operand(this.target);
+    context.emit(new UnaryMachineInstruction(target, left, this.op));
   }
 }
 
@@ -194,6 +248,12 @@ export class MoveInstruction extends IRCode {
   to_stringified() {
     return `${stringify_operand(this.target)} = ${stringify_operand(this.source)}`;
   }
+
+  to_machine_code(context: RelocatableUnit) {
+    const source = context.to_machine_operand(this.source);
+    const target = context.to_machine_operand(this.target);
+    context.emit(new MoveMachineInstruction(target, source));
+  }
 }
 
 export class JumpInstruction extends IRCode {
@@ -203,6 +263,14 @@ export class JumpInstruction extends IRCode {
 
   to_stringified() {
     return `jump ${this.label}`;
+  }
+
+  to_machine_code(context: RelocatableUnit) {
+    context.emit(new JumpMachineInstruction(this.label));
+  }
+
+  change_label(new_label: string) {
+    return new JumpInstruction(new_label);
   }
 }
 
@@ -225,6 +293,15 @@ export class ConditionalJump extends IRCode {
   to_stringified() {
     return `if ${stringify_operand(this.expression)} goto ${this.label}`;
   }
+
+  to_machine_code(context: RelocatableUnit) {
+    const expression = context.to_machine_operand(this.expression);
+    context.emit(new ConditionalJumpMachineInstruction(expression, this.label));
+  }
+
+  change_label(new_label: string) {
+    return new ConditionalJump(this.expression, new_label);
+  }
 }
 
 export class PushInstruction extends IRCode {
@@ -242,6 +319,11 @@ export class PushInstruction extends IRCode {
 
   to_stringified() {
     return `push ${stringify_operand(this.value)}`;
+  }
+
+  to_machine_code(context: RelocatableUnit) {
+    const value = context.to_machine_operand(this.value);
+    context.emit(new PushMachineInstruction(value));
   }
 }
 
@@ -269,6 +351,12 @@ export class FunctionCallInstruction extends IRCode {
   to_ssa(variable_name: string, context: VariableStackManager) {
     this.target = handle_operand_read(this.target, variable_name, context);
   }
+
+  // By the time that we're here, the operands have already been pushed to the stack, we need to take a copy of the return address
+  to_machine_code(context: RelocatableUnit) {
+    context.emit(new PushMachineInstruction({ type: "instruction_pointer", input_offset: 0 }));
+    context.emit(new JumpMachineInstruction(this.function_name + "_init"));
+  }
 }
 
 export class FunctionExitInstruction extends IRCode {
@@ -283,8 +371,13 @@ export class FunctionExitInstruction extends IRCode {
   get_inputs() {
     return [{ type: "return_register" } as Operand];
   }
+
+  to_machine_code(context: RelocatableUnit) {
+    // context.emit(new PopMachineInstruction({ type: "instruction_pointer" }));
+  }
 }
 
+// THIS INTERMEDIATE INSTRUCTION IS NOT USED
 export class ReturnInstruction extends IRCode {
   constructor(public value: Operand) {
     super();
@@ -296,6 +389,12 @@ export class ReturnInstruction extends IRCode {
 
   to_stringified() {
     return `return ${stringify_operand(this.value)}`;
+  }
+
+  to_machine_code(context: RelocatableUnit) {
+    const value = context.to_machine_operand(this.value);
+    context.emit(new MoveMachineInstruction({ type: "gpr", index: 0 }, value));
+    context.emit(new GotoLabelMachineInstruction("function_exit"));
   }
 }
 
@@ -345,7 +444,7 @@ export function determine_leaders(code: IRCode[]) {
   return leaders;
 }
 
-class BasicBlock {
+export class BasicBlock {
   instructions: IRCode[] = [];
   constructor(public readonly labels: string[]) {}
 
@@ -638,9 +737,10 @@ export function to_ssa(context: FunctionCompilationContext) {
   for (let i = 1; i < cfg.length; i++) idom(i).add_dominance_tree_child(cfg[i]);
   const compiled_root: BasicBlock = cfg[0];
 
+  // For each variable, begin replacement of their definitions to SSA references
   for (const variable of variables) compiled_root.dfs(variable, new VariableStackManager());
-  console.log(cfg, dominators);
-  console.log(cfg.map((block) => block.instructions.map((x) => x.to_stringified())));
+  // console.log(cfg, dominators);
+  // console.log(cfg.map((block) => block.instructions.map((x) => x.to_stringified())));
 
   return cfg;
 }
@@ -786,9 +886,9 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
     else continue;
   }
 
-  console.log(LIVE_OUT);
-
-  const graph = new Graph();
+  // Construct the register interference graph by traversing each block backwards
+  // with the list of live starting as the LIVE_OUT of each block
+  const graph = new RegisterInterferenceGraph();
 
   for (let i = 0; i < cfg.length; i++) {
     const block = cfg[i];
@@ -826,15 +926,10 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
     }
   }
 
-  console.log(graph);
-  const adj_list = {} as { [key: string]: string[] };
-  for (const node in graph.adj_list) adj_list[node.toString()] = graph.adj_list[node].map((x) => x.toString());
-  const color_map = color_graph(adj_list, 7);
-
-  console.log(color_map);
+  return { cfg, graph };
 }
 
-class Graph {
+export class RegisterInterferenceGraph {
   adj_list = [] as number[][];
 
   last_defined = -1;
@@ -867,7 +962,6 @@ class Graph {
   create_edge(a: Operand, b: Operand) {
     if (compare_operands(a, b)) return;
 
-    console.log("Adding", a, b);
     const index_a = this.get_index_of_operand(a);
     const index_b = this.get_index_of_operand(b);
 
@@ -877,6 +971,13 @@ class Graph {
 
   get_adj_list() {
     return this.adj_list;
+  }
+
+  solve(register_count = 7) {
+    const adj_list = {} as { [key: string]: string[] };
+    for (const node in this.adj_list) adj_list[node.toString()] = this.adj_list[node].map((x) => x.toString());
+    const color_map = color_graph(adj_list, register_count);
+    return color_map;
   }
 }
 
@@ -919,11 +1020,14 @@ function are_operand_sets_equal(a: OperandSet, b: OperandSet) {
   return true;
 }
 
-function compare_operands(a: Operand, b: Operand) {
+export function compare_operands(a: Operand, b: Operand) {
   if (a.type !== b.type) return false;
 
   if (a.type === "variable" && b.type === "variable") return a.name === b.name;
-  if (a.type === "literal" && b.type === "literal") return a.value === b.value;
+  if (a.type === "literal" && b.type === "literal") {
+    if (a.is_parameter !== b.is_parameter) return false;
+    return a.value === b.value;
+  }
   if (a.type === "temp_reg" && b.type === "temp_reg") return a.index === b.index;
   if (a.type === "ssa_variable" && b.type === "ssa_variable") return a.name === b.name && a.index === b.index;
   if (a.type === "return_register" && b.type === "return_register") return true;
