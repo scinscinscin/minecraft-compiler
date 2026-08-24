@@ -2,7 +2,6 @@ import {
   BasicBlock,
   compare_operands,
   ConditionalJump,
-  GotoLabel,
   JumpInstruction,
   MoveInstruction,
   Operand,
@@ -10,14 +9,18 @@ import {
   RegisterInterferenceGraph,
 } from "./intermediate";
 import { TokenType } from "./lexer";
+import { LinkedInstruction, LinkerContext } from "./linker";
 import { FunctionCompilationContext } from "./parser";
 import { ChaitinOutput } from "./utils/coloring";
+import { Environment } from "./vm";
 
 abstract class MachineInstruction {
   abstract to_stringified(): string;
+
+  abstract to_machine_code(context: LinkerContext): void;
 }
 
-type MachineOperand =
+export type MachineOperand =
   | { type: "gpr"; index: number }
   | { type: "instruction_pointer"; input_offset: number }
   | { type: "stack_pointer" }
@@ -37,7 +40,7 @@ function stringify_machine_operand(operand: MachineOperand) {
   if (operand.type === "parameter") return `stack[bp + ${operand.index + 2}]`;
 }
 
-export class BinaryMachineInstruction extends MachineInstruction {
+export class BinaryMachineInstruction extends MachineInstruction implements LinkedInstruction {
   constructor(
     public readonly target: MachineOperand,
     public readonly left: MachineOperand,
@@ -52,9 +55,42 @@ export class BinaryMachineInstruction extends MachineInstruction {
       TokenType[this.op]
     } ${stringify_machine_operand(this.right)}`;
   }
+
+  to_machine_code(context: LinkerContext) {
+    context.emit(this);
+  }
+
+  execute(environment: Environment) {
+    const left = environment.get_machine_operand(this.left);
+    const right = environment.get_machine_operand(this.right);
+
+    const value = compute_binary(left, right, this.op);
+    environment.set_machine_operand(this.target, value);
+  }
 }
 
-export class UnaryMachineInstruction extends MachineInstruction {
+function compute_binary(left: number, right: number, op: TokenType) {
+  if (op === TokenType.PLUS) return left + right;
+  if (op === TokenType.MINUS) return left - right;
+
+  if (op === TokenType.DOUBLE_EQUALS) return left === right ? 1 : 0;
+  if (op === TokenType.BANG_EQUALS) return left !== right ? 1 : 0;
+  if (op === TokenType.LESS_THAN) return left < right ? 1 : 0;
+  if (op === TokenType.GREATER_THAN) return left > right ? 1 : 0;
+  if (op === TokenType.LESS_THAN_EQUALS) return left <= right ? 1 : 0;
+  if (op === TokenType.GREATER_THAN_EQUALS) return left >= right ? 1 : 0;
+
+  if (op === TokenType.PIPE) return left | right;
+  if (op === TokenType.TILDE_PIPE) return left | ~right;
+  if (op === TokenType.AMPERSAND) return left & right;
+  if (op === TokenType.TILDE_AMPERSAND) return left & ~right;
+  if (op === TokenType.CARAT) return left ^ right;
+  if (op === TokenType.TILDE_CARAT) return left ^ ~right;
+
+  throw new Error("Invariant: Binary operation should not be null. " + op);
+}
+
+export class UnaryMachineInstruction extends MachineInstruction implements LinkedInstruction {
   constructor(
     public readonly target: MachineOperand,
     public readonly left: MachineOperand,
@@ -66,9 +102,27 @@ export class UnaryMachineInstruction extends MachineInstruction {
   to_stringified() {
     return `${stringify_machine_operand(this.target)} = ${stringify_machine_operand(this.left)} ${TokenType[this.op]}`;
   }
+
+  to_machine_code(context: LinkerContext) {
+    context.emit(this);
+  }
+
+  execute(environment: Environment) {
+    const left = environment.get_machine_operand(this.left);
+    const value = compute_unary(left, this.op);
+    environment.set_machine_operand(this.target, value);
+  }
 }
 
-export class MoveMachineInstruction extends MachineInstruction {
+function compute_unary(value: number, op: TokenType) {
+  if (op === TokenType.TILDE) return ~value;
+  if (op === TokenType.PLUS) return +value;
+  if (op === TokenType.MINUS) return -value;
+
+  throw new Error("Invariant: Unary operation should not be null. " + op);
+}
+
+export class MoveMachineInstruction extends MachineInstruction implements LinkedInstruction {
   constructor(
     public readonly target: MachineOperand,
     public readonly source: MachineOperand,
@@ -79,6 +133,15 @@ export class MoveMachineInstruction extends MachineInstruction {
   to_stringified() {
     return `${stringify_machine_operand(this.target)} = ${stringify_machine_operand(this.source)}`;
   }
+
+  to_machine_code(context: LinkerContext) {
+    context.emit(this);
+  }
+
+  execute(environment: Environment) {
+    const value = environment.get_machine_operand(this.source);
+    environment.set_machine_operand(this.target, value);
+  }
 }
 
 export class JumpMachineInstruction extends MachineInstruction {
@@ -88,6 +151,26 @@ export class JumpMachineInstruction extends MachineInstruction {
 
   to_stringified() {
     return `jump ${this.label}`;
+  }
+
+  to_machine_code(context: LinkerContext) {
+    const index = context.get_goto_label(this.label) ?? -1;
+    context.emit(new JumpLinkedInstruction(this.label, index));
+  }
+}
+
+export class JumpLinkedInstruction implements LinkedInstruction {
+  constructor(
+    public readonly label: string,
+    public index: number,
+  ) {}
+
+  to_stringified() {
+    return `jump ${this.index}`;
+  }
+
+  execute(environment: Environment) {
+    environment.set_ip(this.index);
   }
 }
 
@@ -102,6 +185,29 @@ export class ConditionalJumpMachineInstruction extends MachineInstruction {
   to_stringified() {
     return `if ${stringify_machine_operand(this.condition)} goto ${this.label}`;
   }
+
+  to_machine_code(context: LinkerContext) {
+    const index = context.get_goto_label(this.label) ?? -1;
+    context.emit(new ConditionalJumpLinkedInstruction(this.condition, this.label, index));
+  }
+}
+
+export class ConditionalJumpLinkedInstruction implements LinkedInstruction {
+  constructor(
+    public readonly condition: MachineOperand,
+    public readonly label: string,
+    public index: number,
+  ) {}
+
+  to_stringified() {
+    return `if ${stringify_machine_operand(this.condition)} goto ${this.index}`;
+  }
+
+  execute(environment: Environment) {
+    const condition = environment.get_machine_operand(this.condition);
+    const is_true = condition !== 0;
+    if (is_true) environment.set_ip(this.index);
+  }
 }
 
 export class GotoLabelMachineInstruction extends MachineInstruction {
@@ -112,9 +218,13 @@ export class GotoLabelMachineInstruction extends MachineInstruction {
   to_stringified() {
     return `${this.label}:`;
   }
+
+  to_machine_code(context: LinkerContext) {
+    context.add_goto_label(this.label);
+  }
 }
 
-export class PushMachineInstruction extends MachineInstruction {
+export class PushMachineInstruction extends MachineInstruction implements LinkedInstruction {
   constructor(public readonly value: MachineOperand) {
     super();
   }
@@ -122,15 +232,40 @@ export class PushMachineInstruction extends MachineInstruction {
   to_stringified() {
     return `push ${stringify_machine_operand(this.value)}`;
   }
+
+  to_machine_code(context: LinkerContext) {
+    context.emit(this);
+  }
+
+  execute(environment: Environment) {
+    const value = environment.get_machine_operand(this.value);
+
+    // decrement the sp and set the value
+    const sp = environment.get_machine_operand({ type: "stack_pointer" });
+    environment.set_machine_operand({ type: "stack_pointer" }, sp - 1);
+    environment.memory[sp - 1] = value;
+  }
 }
 
-export class PopMachineInstruction extends MachineInstruction {
+export class PopMachineInstruction extends MachineInstruction implements LinkedInstruction {
   constructor(public readonly target: MachineOperand) {
     super();
   }
 
   to_stringified() {
     return `pop ${stringify_machine_operand(this.target)}`;
+  }
+
+  to_machine_code(context: LinkerContext) {
+    context.emit(this);
+  }
+
+  execute(environment: Environment) {
+    const sp = environment.get_machine_operand({ type: "stack_pointer" });
+    const value = environment.memory[sp];
+
+    environment.set_machine_operand({ type: "stack_pointer" }, sp + 1);
+    environment.set_machine_operand(this.target, value);
   }
 }
 
@@ -140,6 +275,7 @@ type EdgeMapping = { basic_block: BasicBlock; new_predecessors: NewPredecessor[]
 export class RelocatableUnit {
   emitted = [] as MachineInstruction[];
   emit(mcode: MachineInstruction) {
+    // console.log("+ Emitting", mcode);
     this.emitted.push(mcode);
   }
 
@@ -195,9 +331,9 @@ export function compile(
       if (compare_operands(target, source)) return;
 
       // Comment this block if you want to force to edge transitions even if its pointless
-      // const op1_assigned = graph._index_of(target);
-      // const op2_assigned = graph._index_of(source);
-      // if (register_solution.color_map[op1_assigned] === register_solution.color_map[op2_assigned]) return;
+      const op1_assigned = graph._index_of(target).toString();
+      const op2_assigned = graph._index_of(source).toString();
+      if (register_solution.color_map[op1_assigned] === register_solution.color_map[op2_assigned]) return;
 
       const existing = new_predecessors.find((x) => x.predecessor === block);
       if (existing != null) existing.associations.push(new MoveInstruction(target, source));
@@ -224,7 +360,7 @@ export function compile(
   // Push base pointer to stack
   // Copy current value of stack pointer to base pointer
   // Move stack by number of variables
-  relocatable_unit.emit(new GotoLabel(context.function_name + "_init"));
+  relocatable_unit.emit(new GotoLabelMachineInstruction(context.function_name + "_init"));
   relocatable_unit.emit(new PushMachineInstruction({ type: "base_pointer" }));
   relocatable_unit.emit(new MoveMachineInstruction({ type: "base_pointer" }, { type: "stack_pointer" }));
   relocatable_unit.emit(
@@ -236,8 +372,13 @@ export function compile(
     ),
   );
 
+  // Push registers we'll clobber to the stack
+  const clobbered = [...new Set(Object.values(register_solution.color_map))];
+  for (const clobber of clobbered) relocatable_unit.emit(new PushMachineInstruction({ type: "gpr", index: clobber }));
+
   const finalizers = blocks.map((e) => e.instructions[e.instructions.length - 1]);
   for (const intermediate of intermediates) {
+    // console.log("- Processing", intermediate);
     // check if instruction is a finalizer
     const basic_block_index = finalizers.indexOf(intermediate);
 
@@ -293,8 +434,8 @@ export function compile(
             if (new_predecessor != null) {
               const successor_label = `__edge_${basic_block_index}_${target_block_index}__`;
               relocatable_unit.emit(new JumpMachineInstruction(successor_label));
-            } else intermediate.to_machine_code(relocatable_unit);
-          } else intermediate.to_machine_code(relocatable_unit);
+            }
+          }
         }
       }
     }
@@ -302,6 +443,9 @@ export function compile(
     // If not finalizing anything, then compile normally
     else intermediate.to_machine_code(relocatable_unit);
   }
+
+  for (const clobber of clobbered.toReversed())
+    relocatable_unit.emit(new PopMachineInstruction({ type: "gpr", index: clobber }));
 
   // Deallocate the created variables
   // Pop BP and POP back to instruction pointer
@@ -314,7 +458,7 @@ export function compile(
     ),
   );
   relocatable_unit.emit(new PopMachineInstruction({ type: "base_pointer" }));
-  relocatable_unit.emit(new PopMachineInstruction({ type: "instruction_pointer", input_offset: 1 }));
+  relocatable_unit.emit(new PopMachineInstruction({ type: "instruction_pointer", input_offset: 2 }));
 
   return relocatable_unit;
 }

@@ -22,3 +22,11 @@ Things that have been done:
       1. Traverse each basic block backwards with `live` starting as its live out
       2. For each instruction that defines a variable, add an edge from every operand in live to the defined variable
       3. Remove the defined variable from live and add the operands it uses
+5. Code generation
+   1. Kill the phi nodes by adding new predecessors to block that coalesce register usage
+   2. Emit callee preamble that prepares stack frame
+   3. Emit code sequentially, replacing jumps with "on-edge" predecessors
+   4. Emit callee epilogue that deallocates stack frame
+6. Linking and Loading
+   1. Each translation unit is linked into a single output, removing labels
+   2. Unnecessary jumps (jumps that go to the next instruction) are also removed
