@@ -24,9 +24,15 @@ Things that have been done:
       3. Remove the defined variable from live and add the operands it uses
 5. Code generation
    1. Kill the phi nodes by adding new predecessors to block that coalesce register usage
+      1. Predecessor blocks are created generating the entry point of a function
+      2. Instructions are based on edges whose target registers aren't needed anymore
+         1. If a loop is detected, it is broken by pushing the source to the stack to pop to the target later
    2. Emit callee preamble that prepares stack frame
    3. Emit code sequentially, replacing jumps with "on-edge" predecessors
    4. Emit callee epilogue that deallocates stack frame
 6. Linking and Loading
    1. Each translation unit is linked into a single output, removing labels
    2. Unnecessary jumps (jumps that go to the next instruction) are also removed
+7. Virtual Machine
+   1. An emulator for the Minecraft computer is implemented to test programs
+   2. VM loads in REPL and allows for step-by-step execution to see program states

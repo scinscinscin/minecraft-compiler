@@ -18,6 +18,7 @@ export function start_repl(runner: Runner) {
     if (is_running) {
       if (line === "") runner.tick(logger);
       else if (line === "dump r") runner.dump_registers(logger);
+      else if (line === "ip") runner.dump_ip(logger);
       else if (line === "end") {
         is_running = false;
         console.log("Terminating debugger");

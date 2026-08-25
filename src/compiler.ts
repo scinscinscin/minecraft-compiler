@@ -3,7 +3,6 @@ import {
   compare_operands,
   ConditionalJump,
   JumpInstruction,
-  MoveInstruction,
   Operand,
   Phi,
   RegisterInterferenceGraph,
@@ -38,6 +37,20 @@ function stringify_machine_operand(operand: MachineOperand) {
   if (operand.type === "return_register") return "return_register";
   // Add two for parameter because 0 is base pointer and 1 is for the return address
   if (operand.type === "parameter") return `stack[bp + ${operand.index + 2}]`;
+}
+
+function compare_machine_operands(a: MachineOperand, b: MachineOperand) {
+  if (a.type !== b.type) return false;
+
+  if (a.type === "gpr" && b.type === "gpr") return a.index === b.index;
+  if (a.type === "instruction_pointer" && b.type === "instruction_pointer") return a.input_offset === b.input_offset;
+  if (a.type === "stack_pointer" && b.type === "stack_pointer") return true;
+  if (a.type === "base_pointer" && b.type === "base_pointer") return true;
+  if (a.type === "constant" && b.type === "constant") return a.value === b.value;
+  if (a.type === "return_register" && b.type === "return_register") return true;
+  if (a.type === "parameter" && b.type === "parameter") return a.index === b.index;
+
+  return false;
 }
 
 export class BinaryMachineInstruction extends MachineInstruction implements LinkedInstruction {
@@ -269,7 +282,7 @@ export class PopMachineInstruction extends MachineInstruction implements LinkedI
   }
 }
 
-type NewPredecessor = { predecessor: BasicBlock; associations: MoveInstruction[] };
+type NewPredecessor = { predecessor: BasicBlock; associations: { target: Operand; source: Operand }[] };
 type EdgeMapping = { basic_block: BasicBlock; new_predecessors: NewPredecessor[] }[];
 
 export class RelocatableUnit {
@@ -308,6 +321,77 @@ export class RelocatableUnit {
   }
 }
 
+export function create_temporary_block(graph_edges: { target: MachineOperand; source: MachineOperand }[]) {
+  const queue = [...graph_edges];
+  const commands = [] as MachineInstruction[];
+
+  // Get all the edges that depend on the value stored in the target operand
+  const get_dependents = (target: MachineOperand) => queue.filter((x) => compare_machine_operands(x.source, target));
+
+  // checks if there is a loop in the edges between dest and src
+  const check_loop = (dest: MachineOperand, src: MachineOperand): boolean => {
+    const chain = [dest] as MachineOperand[];
+
+    let chain_modified = false;
+    while (true) {
+      chain_modified = false;
+
+      // get the parent targets of operands in chain
+      const parent_targets = [...new Set(chain.flatMap((x) => get_dependents(x)))].map((e) => e.target);
+      for (const parent_target of parent_targets) {
+        const is_in_chain = chain.some((x) => compare_machine_operands(x, parent_target));
+        if (!is_in_chain) {
+          chain_modified = true;
+          chain.push(parent_target);
+        }
+      }
+
+      if (chain_modified == false) break;
+      else continue;
+    }
+
+    return chain.some((x) => compare_machine_operands(x, src));
+  };
+
+  const pops: MachineInstruction[] = [];
+
+  next_edge: while (queue.length > 0) {
+    const { target, source } = queue[0];
+
+    // check if thera are things that depend on target
+    const target_dependents = queue.filter((x) => compare_machine_operands(x.source, target));
+    if (target_dependents.length === 0) {
+      // nothing depends on the target, so we can safely emit a move from source to target and remove the edge from the queue
+      commands.push(new MoveMachineInstruction(target, source));
+      queue.shift();
+      continue next_edge;
+    } else {
+      // future instructions use target as a source
+      // we can either move target to the back of the queue or emit a push instruction
+      // to add source in the stack and pop it afterwards
+
+      // check if there's a loop from target to source
+      const has_loop = check_loop(target, source);
+      if (has_loop) {
+        // push the value of source to the stack and pop it to the target afterwards
+        commands.push(new PushMachineInstruction(source));
+        pops.push(new PopMachineInstruction(target));
+
+        queue.shift();
+        continue next_edge;
+      } else {
+        // no loop between target and source, we can just put the edge at the end of the queue
+        queue.push(queue.shift()!);
+        continue next_edge;
+      }
+    }
+  }
+
+  // undo the in the reverse order
+  for (const pop of pops.toReversed()) commands.push(pop);
+  return commands;
+}
+
 export function compile(
   context: FunctionCompilationContext,
   blocks: BasicBlock[],
@@ -325,9 +409,9 @@ export function compile(
   const edge_mapping = [] as EdgeMapping;
   for (const block of blocks) {
     const phi_nodes = block.instructions.filter((x) => x instanceof Phi);
-    const new_predecessors = [] as NewPredecessor[];
 
-    const associate = (block: BasicBlock, target: Operand, source: Operand) => {
+    const new_predecessors = [] as { predecessor: BasicBlock; associations: { target: Operand; source: Operand }[] }[];
+    const emit = (block: BasicBlock, target: Operand, source: Operand) => {
       if (compare_operands(target, source)) return;
 
       // Comment this block if you want to force to edge transitions even if its pointless
@@ -336,8 +420,8 @@ export function compile(
       if (register_solution.color_map[op1_assigned] === register_solution.color_map[op2_assigned]) return;
 
       const existing = new_predecessors.find((x) => x.predecessor === block);
-      if (existing != null) existing.associations.push(new MoveInstruction(target, source));
-      else new_predecessors.push({ predecessor: block, associations: [new MoveInstruction(target, source)] });
+      if (existing != null) existing.associations.push({ target, source });
+      else new_predecessors.push({ predecessor: block, associations: [{ target, source }] });
     };
 
     for (const phi_node of phi_nodes) {
@@ -345,11 +429,10 @@ export function compile(
 
       if (sources.length !== from.length)
         throw new Error("Invariant: Phi node should have the same number of sources and from");
-      for (let i = 0; i < sources.length; i++) associate(from[i], target, sources[i]);
+      for (let i = 0; i < sources.length; i++) emit(from[i], target, sources[i]);
     }
 
     if (new_predecessors.length === 0) continue;
-
     // if we're going to start generating the beginning "block"
     // we need to generate the code in new_predecessors
     edge_mapping.push({ basic_block: block, new_predecessors });

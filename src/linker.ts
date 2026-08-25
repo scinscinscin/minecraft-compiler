@@ -38,6 +38,12 @@ export class LinkerContext {
 
   labels: { [key: string]: number } = {};
   add_goto_label(label: string) {
+    // if the previously emitted instruction is a jump instruction to this label, delete it
+    if (this.emitted.length > 0 && this.emitted[this.emitted.length - 1] instanceof JumpLinkedInstruction) {
+      const instr = this.emitted[this.emitted.length - 1] as JumpLinkedInstruction;
+      if (instr.label === label) this.emitted.pop();
+    }
+
     this.labels[label] = this.emitted.length;
 
     // Rewrite jump instructions that refer to this label
@@ -85,9 +91,5 @@ export function load(units: [string, RelocatableUnit][]) {
     for (const instruction of unit.emitted) instruction.to_machine_code(context);
   }
 
-  // return and remove useless jumps
-  return context.emitted.filter((e, i) => {
-    if (!(e instanceof JumpLinkedInstruction)) return true;
-    return e.index !== i + 1;
-  });
+  return context.emitted;
 }

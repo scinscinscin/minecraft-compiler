@@ -11,7 +11,6 @@ import {
   MoveInstruction,
   Operand,
   PushInstruction,
-  ReturnInstruction,
   UnaryInstruction,
 } from "./intermediate";
 
@@ -303,7 +302,7 @@ export class FunctionCall extends ExpressionNode {
   }
 
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
-    const args = this.args.get_items_reversed();
+    const args = this.args.get_items();
     const operands = [] as Operand[];
     for (const arg of args) {
       const dest = arg.emit_ir(context);
@@ -313,6 +312,7 @@ export class FunctionCall extends ExpressionNode {
 
     const destination = preferred_destination ?? context.get_next_temp_reg();
     context.emit(new FunctionCallInstruction(destination, operands, this.func_name.lexeme));
+    context.emit(new MoveInstruction(destination, { type: "return_register" }));
     return destination;
   }
 }
@@ -326,7 +326,7 @@ export class VariableReference extends ExpressionNode {
     const parameter_index = context.parameters.indexOf(this.name.lexeme);
     const ret: Operand =
       parameter_index !== -1
-        ? { type: "literal", is_parameter: true, value: parameter_index }
+        ? { type: "literal", is_parameter: true, value: context.parameters.indexOf(this.name.lexeme) }
         : { type: "variable", name: this.name.lexeme };
 
     if (preferred_destination == null) return ret;

@@ -1,6 +1,7 @@
 import {
   BinaryMachineInstruction,
   ConditionalJumpMachineInstruction,
+  create_temporary_block,
   GotoLabelMachineInstruction,
   JumpMachineInstruction,
   MoveMachineInstruction,
@@ -118,7 +119,12 @@ export class GotoLabel extends IRCode {
           // Emit new label, then the instructions, then the jump
           const predecessor_label = `__edge_${from_index}_${basic_block_index}__`;
           context.emit(new GotoLabelMachineInstruction(predecessor_label));
-          for (const instruction of new_predecessor.associations) instruction.to_machine_code(context);
+
+          const machine_operands = new_predecessor.associations.map((x) => ({
+            target: context.to_machine_operand(x.target),
+            source: context.to_machine_operand(x.source),
+          }));
+          for (const instruction of create_temporary_block(machine_operands)) context.emit(instruction);
           context.emit(new JumpMachineInstruction(this.label));
         }
       }
@@ -353,9 +359,18 @@ export class FunctionCallInstruction extends IRCode {
   }
 
   // By the time that we're here, the operands have already been pushed to the stack, we need to take a copy of the return address
+  // Once we return from the called function, we need to deallocate the arguments pushed
   to_machine_code(context: RelocatableUnit) {
     context.emit(new PushMachineInstruction({ type: "instruction_pointer", input_offset: 0 }));
     context.emit(new JumpMachineInstruction(this.function_name + "_init"));
+    context.emit(
+      new BinaryMachineInstruction(
+        { type: "stack_pointer" },
+        { type: "stack_pointer" },
+        { type: "constant", value: this.operands.length },
+        TokenType.PLUS,
+      ),
+    );
   }
 }
 
@@ -818,6 +833,9 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
     use_def[i] = { use, def, phi_uses };
   }
 
+  // console.log("Printing use_def for each block");
+  // for (const { use, def, phi_uses } of use_def) console.log(use, def, phi_uses);
+
   // Run fixed point iteration to determine the live in and live out of each block
   // LIVE_OUT = union of live in of the successors
   // LIVE_IN = USE(B) UNION (LIVE_OUT(B) - DEF(B))
@@ -965,8 +983,8 @@ export class RegisterInterferenceGraph {
     const index_a = this.get_index_of_operand(a);
     const index_b = this.get_index_of_operand(b);
 
-    this.adj_list[index_a].push(index_b);
-    this.adj_list[index_b].push(index_a);
+    if (this.adj_list[index_a].includes(index_b) == false) this.adj_list[index_a].push(index_b);
+    if (this.adj_list[index_b].includes(index_a) == false) this.adj_list[index_b].push(index_a);
   }
 
   get_adj_list() {

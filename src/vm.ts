@@ -72,6 +72,11 @@ export class Runner {
     logger.log(`Return register: [${this.environment.return_register}]`);
   }
 
+  dump_ip(logger: Logger) {
+    const cmd = this.instructions[this.environment.instruction_pointer].to_stringified();
+    logger.log(`[${this.environment.instruction_pointer}]: ${cmd}`);
+  }
+
   tick(logger: Logger) {
     if (this.environment.halted) {
       logger.log("Not executing command since VM is halted.");
