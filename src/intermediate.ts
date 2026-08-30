@@ -4,8 +4,8 @@ import {
   create_temporary_block,
   GotoLabelMachineInstruction,
   JumpMachineInstruction,
+  LoadMachineInstruction,
   MoveMachineInstruction,
-  PopMachineInstruction,
   PushMachineInstruction,
   RelocatableUnit,
   UnaryMachineInstruction,
@@ -186,6 +186,38 @@ export class BinaryInstruction extends IRCode {
     const right = context.to_machine_operand(this.right);
     const target = context.to_machine_operand(this.target);
     context.emit(new BinaryMachineInstruction(target, left, right, this.op));
+  }
+}
+
+export class LoadInstruction extends IRCode {
+  constructor(
+    public target: Operand,
+    public source: Operand,
+  ) {
+    super();
+  }
+
+  get_inputs() {
+    return [this.source];
+  }
+
+  get_outputs() {
+    return [this.target];
+  }
+
+  to_ssa(variable_name: string, context: VariableStackManager) {
+    this.source = handle_operand_read(this.source, variable_name, context);
+    this.target = handle_operand_write(this.target, variable_name, context);
+  }
+
+  to_stringified() {
+    return `${stringify_operand(this.target)} = *${stringify_operand(this.source)}`;
+  }
+
+  to_machine_code(context: RelocatableUnit) {
+    const source = context.to_machine_operand(this.source);
+    const target = context.to_machine_operand(this.target);
+    context.emit(new LoadMachineInstruction(target, source));
   }
 }
 

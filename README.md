@@ -36,3 +36,18 @@ Things that have been done:
 7. Virtual Machine
    1. An emulator for the Minecraft computer is implemented to test programs
    2. VM loads in REPL and allows for step-by-step execution to see program states
+
+Things that would be nice to implement:
+
+ - [ ] - Pointer dereferencing
+   - [x] - Reading from pointer dereference `foo = *bar`
+   - [ ] - Writing to pointer dereference `*bar = foo`
+ - [ ] - Static variable location
+ - [ ] - Type checking
+ - [ ] - Structures and arrays
+ - [ ] - Standard Library
+ - [ ] - Register spillage
+ - [ ] - Code optimization
+   - [ ] - Remove temporary blocks that coalesce registers in the same way
+   - [ ] - Implement constant folding / propagation
+ - [ ] - Emitting Minecraft schematic files

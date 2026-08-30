@@ -18,8 +18,18 @@ export function start_repl(runner: Runner) {
     if (is_running) {
       if (line === "") runner.tick(logger);
       else if (line === "dump r") runner.dump_registers(logger);
+      else if (line === "dump s") runner.dump_stack(logger);
       else if (line === "ip") runner.dump_ip(logger);
-      else if (line === "end") {
+      else if (line.startsWith("peek")) {
+        const address = parseInt(line.split(" ")[1]);
+        if (Number.isNaN(address)) throw new Error("Invariant: Address should not be NaN");
+        runner.peek(logger, address);
+      } else if (line.startsWith("poke")) {
+        const address = parseInt(line.split(" ")[1]);
+        const value = parseInt(line.split(" ")[2]);
+        if (Number.isNaN(address) || Number.isNaN(value)) throw new Error("Invariant: Address should not be NaN");
+        runner.poke(logger, address, value);
+      } else if (line === "end") {
         is_running = false;
         console.log("Terminating debugger");
       } else {

@@ -157,6 +157,30 @@ export class MoveMachineInstruction extends MachineInstruction implements Linked
   }
 }
 
+export class LoadMachineInstruction extends MachineInstruction implements LinkedInstruction {
+  constructor(
+    public readonly target: MachineOperand,
+    public readonly source: MachineOperand,
+  ) {
+    super();
+  }
+
+  to_stringified() {
+    return `load ${stringify_machine_operand(this.target)} = *${stringify_machine_operand(this.source)}`;
+  }
+
+  to_machine_code(context: LinkerContext) {
+    context.emit(this);
+  }
+
+  execute(environment: Environment) {
+    const address = environment.get_machine_operand(this.source);
+    const value = environment.get_memory(address);
+
+    environment.set_machine_operand(this.target, value);
+  }
+}
+
 export class JumpMachineInstruction extends MachineInstruction {
   constructor(public readonly label: string) {
     super();

@@ -78,8 +78,8 @@ export function load(units: [string, RelocatableUnit][]) {
   const context = new LinkerContext();
 
   // include the preamble
-  context.emit(new MoveMachineInstruction({ type: "base_pointer" }, { type: "constant", value: 31 }));
-  context.emit(new MoveMachineInstruction({ type: "stack_pointer" }, { type: "constant", value: 31 }));
+  context.emit(new MoveMachineInstruction({ type: "base_pointer" }, { type: "constant", value: 255 }));
+  context.emit(new MoveMachineInstruction({ type: "stack_pointer" }, { type: "constant", value: 255 }));
   context.emit(new PushMachineInstruction({ type: "instruction_pointer", input_offset: 0 }));
   context.emit(new JumpLinkedInstruction("main_init", -1));
   context.emit(new HaltMachineInstruction());

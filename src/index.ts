@@ -11,23 +11,29 @@ import { start_repl } from "./repl";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
 // calculate the 6th fib term, which is 8 (index = 0)
+// const SOURCE = `function main () {
+//   var n1 = 0;
+//   var n2 = 1;
+//   var nextterm = 1;
+//   var i = 0;
+
+//   while loop (i < 5) {
+//     nextterm = n1 + n2;
+
+//     n1 = n2;
+//     n2 = nextterm;
+
+//     i = i + 1;
+//   }
+
+//   return nextterm;
+// }`;
+
 const SOURCE = `function main () {
-  var n1 = 0;
-  var n2 = 1;
-  var nextterm = 1;
   var i = 0;
-
-  while loop (i < 5) {
-    nextterm = n1 + n2;
-
-    n1 = n2;
-    n2 = nextterm;
-
-    i = i + 1;
-  }
-
-  return nextterm;
-}`;
+  return *i;
+}
+`;
 
 // const SOURCE = `function main () {
 //   var i = 0;
@@ -63,8 +69,7 @@ async function main() {
     const intermediate_representation = fn.compile();
     const ssa_representation = to_ssa(intermediate_representation);
     const { cfg, graph } = liveliness_analysis(ssa_representation);
-    console.log(graph);
-    pretty_print(ssa_representation);
+    // pretty_print(ssa_representation);
 
     const compiled = compile(intermediate_representation, cfg, graph);
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
@@ -76,8 +81,7 @@ async function main() {
     console.log(`[${i.toString().padStart(2, "0")}]: ${instruction.to_stringified()}`);
   }
 
-  const runner = create_runner(linked);
-  start_repl(runner);
+  start_repl(create_runner(linked));
 }
 
 function pretty_print(x: BasicBlock[]) {

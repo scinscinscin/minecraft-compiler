@@ -3,7 +3,7 @@ export const toStringifiedTokenType = (type: TokenType) => TokenType[type];
 
 // prettier-ignore
 export enum TokenType {
-  PLUS, MINUS, LEFTSHIFT, RIGHTSHIFT, PIPE, AMPERSAND, CARAT, TILDE_PIPE, TILDE_AMPERSAND, TILDE_CARAT, TILDE,
+  PLUS, MINUS, LEFTSHIFT, RIGHTSHIFT, PIPE, AMPERSAND, CARAT, TILDE_PIPE, TILDE_AMPERSAND, TILDE_CARAT, TILDE, STAR,
   DOUBLE_EQUALS, BANG_EQUALS, LESS_THAN, GREATER_THAN, LESS_THAN_EQUALS, GREATER_THAN_EQUALS,
   EQUALS, 
   LPAREN, RPAREN, LBRACE, RBRACE,
@@ -31,6 +31,7 @@ lexerGenerator.addRule("decimal_number", "(${digit})+");
 
 lexerGenerator.addRule("plus", "$+", TokenType.PLUS);
 lexerGenerator.addRule("minus", "$-", TokenType.MINUS);
+lexerGenerator.addRule("star", "$*", TokenType.STAR);
 lexerGenerator.addRule("leftshift", "$<$<", TokenType.LEFTSHIFT);
 lexerGenerator.addRule("rightshift", "$>$>", TokenType.RIGHTSHIFT);
 lexerGenerator.addRule("pipe", "$|", TokenType.PIPE);

@@ -24,7 +24,8 @@
 <BITWISE_XOR_EXPRESSION: binary_expr>: <TERM_EXPRESSION: left> ([CARAT | TILDE_CARAT: op] <BITWISE_XOR_EXPRESSION: right>)?;
 <TERM_EXPRESSION: binary_expr>: <SHIFT_EXPRESSION: left> ([PLUS | MINUS: op] <TERM_EXPRESSION: right>)?;
 <SHIFT_EXPRESSION: unary_expr>: ([LEFTSHIFT | RIGHTSHIFT: op])? <BITWISE_NOT_EXPRESSION: target>;
-<BITWISE_NOT_EXPRESSION: unary_expr>: ([TILDE: op])? <ENDPOINT: target>;
+<BITWISE_NOT_EXPRESSION: unary_expr>: ([TILDE: op])? <POINTER_DEREFERENCE_EXPRESSION: target>;
+<POINTER_DEREFERENCE_EXPRESSION: unary_expr>: ([STAR: op])? <ENDPOINT: target>;
 
 <ENDPOINT: grouping_expr>: [LPAREN] <EXPRESSION: expr> [RPAREN];
 <ENDPOINT: variable_reference>: [IDENTIFIER: variable_name];

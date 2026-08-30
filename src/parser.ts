@@ -8,6 +8,7 @@ import {
   GotoLabel,
   IRCode,
   JumpInstruction,
+  LoadInstruction,
   MoveInstruction,
   Operand,
   PushInstruction,
@@ -243,7 +244,9 @@ export class UnaryExpression extends ExpressionNode {
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
     const destination = preferred_destination ?? context.get_next_temp_reg();
     const left = this.target.emit_ir(context);
-    context.emit(new UnaryInstruction(destination, left, this.op.type));
+
+    if (this.op.type !== TokenType.STAR) context.emit(new UnaryInstruction(destination, left, this.op.type));
+    else context.emit(new LoadInstruction(destination, left));
     return destination;
   }
 }

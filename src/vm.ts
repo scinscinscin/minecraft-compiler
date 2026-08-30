@@ -17,6 +17,14 @@ export class Environment {
 
   memory = init_memory(256);
 
+  get_memory(address: number) {
+    return this.memory[address];
+  }
+
+  set_memory(address: number, value: number) {
+    this.memory[address] = value;
+  }
+
   get_machine_operand(operand: MachineOperand): number {
     if (operand.type === "gpr") return this.gpr[operand.index];
     if (operand.type === "instruction_pointer") return this.instruction_pointer;
@@ -70,6 +78,21 @@ export class Runner {
     logger.log(`SP: [${this.environment.stack_pointer}]`);
     logger.log(`BP: [${this.environment.base_pointer}]`);
     logger.log(`Return register: [${this.environment.return_register}]`);
+  }
+
+  dump_stack(logger: Logger) {
+    logger.log("Stack:");
+    for (let i = 255; i >= this.environment.stack_pointer; i--) logger.log(`[${i}]: ${this.environment.memory[i]}`);
+    logger.log("---");
+  }
+
+  peek(logger: Logger, address: number) {
+    logger.log(`[${address}]: ${this.environment.get_memory(address)}`);
+  }
+
+  poke(logger: Logger, address: number, value: number) {
+    logger.log(`SET [${address}]: ${value}`);
+    this.environment.set_memory(address, value);
   }
 
   dump_ip(logger: Logger) {
