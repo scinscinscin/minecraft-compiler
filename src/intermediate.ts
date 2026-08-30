@@ -8,6 +8,7 @@ import {
   MoveMachineInstruction,
   PushMachineInstruction,
   RelocatableUnit,
+  StoreMachineInstruction,
   UnaryMachineInstruction,
 } from "./compiler";
 import { TokenType } from "./lexer";
@@ -218,6 +219,34 @@ export class LoadInstruction extends IRCode {
     const source = context.to_machine_operand(this.source);
     const target = context.to_machine_operand(this.target);
     context.emit(new LoadMachineInstruction(target, source));
+  }
+}
+
+export class StoreInstruction extends IRCode {
+  constructor(
+    public target: Operand,
+    public source: Operand,
+  ) {
+    super();
+  }
+
+  get_inputs() {
+    return [this.target, this.source];
+  }
+
+  to_ssa(variable_name: string, context: VariableStackManager) {
+    this.source = handle_operand_read(this.source, variable_name, context);
+    this.target = handle_operand_read(this.target, variable_name, context);
+  }
+
+  to_stringified() {
+    return `*${stringify_operand(this.target)} = ${stringify_operand(this.source)}`;
+  }
+
+  to_machine_code(context: RelocatableUnit) {
+    const source = context.to_machine_operand(this.source);
+    const target = context.to_machine_operand(this.target);
+    context.emit(new StoreMachineInstruction(target, source));
   }
 }
 

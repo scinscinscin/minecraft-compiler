@@ -181,6 +181,29 @@ export class LoadMachineInstruction extends MachineInstruction implements Linked
   }
 }
 
+export class StoreMachineInstruction extends MachineInstruction implements LinkedInstruction {
+  constructor(
+    public readonly target: MachineOperand,
+    public readonly source: MachineOperand,
+  ) {
+    super();
+  }
+
+  to_stringified() {
+    return `store *${stringify_machine_operand(this.target)} = ${stringify_machine_operand(this.source)}`;
+  }
+
+  to_machine_code(context: LinkerContext) {
+    context.emit(this);
+  }
+
+  execute(environment: Environment) {
+    const value = environment.get_machine_operand(this.source);
+    const address = environment.get_machine_operand(this.target);
+    environment.set_memory(address, value);
+  }
+}
+
 export class JumpMachineInstruction extends MachineInstruction {
   constructor(public readonly label: string) {
     super();

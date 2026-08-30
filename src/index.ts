@@ -10,40 +10,7 @@ import { create_runner } from "./vm";
 import { start_repl } from "./repl";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-// calculate the 6th fib term, which is 8 (index = 0)
-// const SOURCE = `function main () {
-//   var n1 = 0;
-//   var n2 = 1;
-//   var nextterm = 1;
-//   var i = 0;
-
-//   while loop (i < 5) {
-//     nextterm = n1 + n2;
-
-//     n1 = n2;
-//     n2 = nextterm;
-
-//     i = i + 1;
-//   }
-
-//   return nextterm;
-// }`;
-
-const SOURCE = `function main () {
-  var i = 0;
-  return *i;
-}
-`;
-
-// const SOURCE = `function main () {
-//   var i = 0;
-
-//   while inside (i < 2) {
-//     i = i + 1;
-//   }
-
-//   return i;
-// }`;
+const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/source.txt");
 
 async function main() {
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));
@@ -52,7 +19,7 @@ async function main() {
     toStringifiedTokenType,
   });
 
-  const lexer = lexerGenerator.generate(SOURCE, () => ({}));
+  const lexer = lexerGenerator.generate(await fs.readFile(EXAMPLE_FILE, "utf8"), () => ({}));
   const parser = parserGenerator.generate(lexer, {
     reducer: ({ bag, name }) => {
       const reducer = Reducers[name ?? ""];
@@ -67,9 +34,10 @@ async function main() {
   const functions = rootNode.function_definitions.get_items_reversed();
   const units = functions.map((fn) => {
     const intermediate_representation = fn.compile();
+    console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
     const ssa_representation = to_ssa(intermediate_representation);
     const { cfg, graph } = liveliness_analysis(ssa_representation);
-    // pretty_print(ssa_representation);
+    pretty_print(ssa_representation);
 
     const compiled = compile(intermediate_representation, cfg, graph);
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
@@ -81,6 +49,7 @@ async function main() {
     console.log(`[${i.toString().padStart(2, "0")}]: ${instruction.to_stringified()}`);
   }
 
+  console.clear();
   start_repl(create_runner(linked));
 }
 

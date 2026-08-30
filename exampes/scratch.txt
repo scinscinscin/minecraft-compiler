@@ -1,0 +1,9 @@
+function main () {
+  write(0, 255);
+  return 0;
+}
+
+function write(a, v){
+  *a = v;
+  return v;
+}

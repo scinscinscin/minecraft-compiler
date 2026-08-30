@@ -1,8 +1,73 @@
-Basic c-like compiler targetting a Minecraft Redstone Computer
+# Dust Compiler 
 
-Ouptut instructions are subject to change as the computer is developed
+This project implements a compiler for Dust, a C-like language targetting a Minecraft Redstone Computer. 
 
-Things that have been done:
+Dust is a combiantion of C semantics with JavaScript / TypeScript syntax that compiles down to a thin instruction set that can be executed on a Minecraft Redstone Computer.
+
+```js
+// An implementation of the Fibonacci sequence in Dust
+function main () {
+  var n1 = 0;
+  var n2 = 1;
+  var nextterm = 1;
+  var i = 0;
+
+  while loop (i < 5) {
+    nextterm = n1 + n2;
+
+    n1 = n2;
+    n2 = nextterm;
+
+    i = i + 1;
+  }
+
+  return nextterm;
+}
+```
+
+## Pipeline:
+
+ - Front-end
+   - Lexer - A lexer is implemented using [Slex](https://github.com/scinscinscin/slex), which generates a stream of tokens on-demand.
+   - Parser - A parser is implemented using [Sparse](https://github.com/scinscinscin/sparse), which creates an LR(1) parser from a set of productions defined in [grammar.txt](src/grammar.txt).
+ - Middle-end
+   - Intermediate Representation - Each translation unit is converted to a three address code intermediate representation.
+   - Optimizer - The IR is converted into Single Static Assignment (SSA) form so that dataflow optimizations can be performed.
+ - Back-end
+   - Register coloring - Each translation unit optimized by the compiler is converted into a register interference graph, upon which Chaitin's algorithm is applied to assign registers. 
+   - Code Generation - The SSA form is killed by adding new predecessors to each block that coalesce register usage.
+   - Linking - All translation units are linked together into a single output, replacing jump labels with final absolute addresses.
+
+## Virtual Machine:
+
+This project implements a step-by-step Virtual Machine REPL that executes the linked code to test programs without having to run them in Minecraft.
+
+![alt text](.github/image.png)
+
+The Virtual Machine allows you to
+ - Step through the code
+ - Run multiple lines at once
+ - Inspect the state of the stack / registers
+ - Peek and poke into memory
+
+## Things that would be nice to implement:
+
+ - [x] - Pointer dereferencing
+   - [x] - Reading from pointer dereference `foo = *bar`
+   - [x] - Writing to pointer dereference `*bar = foo`
+ - [ ] - Static variable location
+ - [ ] - Type checking
+   - [ ] - Structures and arrays
+ - [ ] - Standard Library
+ - [ ] - Register spillage
+ - [ ] - Code optimization
+   - [ ] - Remove temporary blocks that coalesce registers in the same way
+   - [ ] - Implement constant folding / propagation
+ - [ ] - Emitting Minecraft schematic files
+
+---
+
+**Things that have been done:**
 1. Convert the AST to a three address code intermediate representation
 2. Create the basic blocks of a given function and form the control flow graph
    1. The first three address instruction in the intermediate code is a leader
@@ -37,17 +102,8 @@ Things that have been done:
    1. An emulator for the Minecraft computer is implemented to test programs
    2. VM loads in REPL and allows for step-by-step execution to see program states
 
-Things that would be nice to implement:
-
- - [ ] - Pointer dereferencing
-   - [x] - Reading from pointer dereference `foo = *bar`
-   - [ ] - Writing to pointer dereference `*bar = foo`
- - [ ] - Static variable location
- - [ ] - Type checking
- - [ ] - Structures and arrays
- - [ ] - Standard Library
- - [ ] - Register spillage
- - [ ] - Code optimization
-   - [ ] - Remove temporary blocks that coalesce registers in the same way
-   - [ ] - Implement constant folding / propagation
- - [ ] - Emitting Minecraft schematic files
+## Resources
+ - The Dragon Book - everything related to parsing theory and the algorithms used to create Sparse and Slex. 
+ - https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/ - Compilers 101 up to data flow optimization. Issues: It handwaves a lot of the details like for example: SSA
+ - https://en.wikipedia.org/wiki/Static_single-assignment_form - Cytron's SSA algorithm was directly implemented in this compiler to create the control flow graph and SSA form
+ - https://dl.acm.org/doi/pdf/10.1145/872726.806984 - The Chaitin algorithm is used to assign registers, only partially implemented.

@@ -12,6 +12,7 @@ import {
   MoveInstruction,
   Operand,
   PushInstruction,
+  StoreInstruction,
   UnaryInstruction,
 } from "./intermediate";
 
@@ -251,6 +252,27 @@ export class UnaryExpression extends ExpressionNode {
   }
 }
 
+export class PointerAssignmentExpression extends ExpressionNode {
+  constructor(
+    public readonly target: ExpressionNode,
+    public readonly expr: ExpressionNode,
+  ) {
+    super();
+  }
+
+  emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const destination = preferred_destination ?? context.get_next_temp_reg();
+
+    const expr = this.expr.emit_ir(context);
+    const target = this.target.emit_ir(context);
+
+    // need to make sure the destination register actually has the value in left
+    context.emit(new StoreInstruction(target, expr));
+    context.emit(new MoveInstruction(destination, expr));
+    return destination;
+  }
+}
+
 export class AssignmentExpression extends ExpressionNode {
   constructor(
     public readonly variable_name: Token,
@@ -376,6 +398,9 @@ export const Reducers = {
   assignment_expr: (bag: { variable_name?: Token; expr: ExpressionNode }) => {
     if (bag.variable_name == null) return bag.expr;
     else return new AssignmentExpression(bag.variable_name, bag.expr);
+  },
+  pointer_assignment_expr: (bag: { target: ExpressionNode; expr: ExpressionNode }) => {
+    return new PointerAssignmentExpression(bag.target, bag.expr);
   },
   grouping_expr: (bag: { expr: ExpressionNode }) => new GroupingExpression(bag.expr),
   literal_expr: (bag: { number: Token }) => new LiteralExpression(bag.number),
