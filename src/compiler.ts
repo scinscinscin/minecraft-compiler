@@ -82,7 +82,7 @@ export class BinaryMachineInstruction extends MachineInstruction implements Link
   }
 }
 
-function compute_binary(left: number, right: number, op: TokenType) {
+export function compute_binary(left: number, right: number, op: TokenType) {
   if (op === TokenType.PLUS) return left + right;
   if (op === TokenType.MINUS) return left - right;
 
@@ -127,7 +127,7 @@ export class UnaryMachineInstruction extends MachineInstruction implements Linke
   }
 }
 
-function compute_unary(value: number, op: TokenType) {
+export function compute_unary(value: number, op: TokenType) {
   if (op === TokenType.TILDE) return ~value;
   if (op === TokenType.PLUS) return +value;
   if (op === TokenType.MINUS) return -value;

@@ -33,6 +33,9 @@ function main () {
  - Middle-end
    - Intermediate Representation - Each translation unit is converted to a three address code intermediate representation.
    - Optimizer - The IR is converted into Single Static Assignment (SSA) form so that dataflow optimizations can be performed.
+     - Constant propagation - replace and compute expressions whose values are known at compile time
+     - Dead code elimination - remove instructions which compute unused values
+       - Functions are ignored as there is currently no way to tell if they have side-effects
  - Back-end
    - Register coloring - Each translation unit optimized by the compiler is converted into a register interference graph, upon which Chaitin's algorithm is applied to assign registers. 
    - Code Generation - The SSA form is killed by adding new predecessors to each block that coalesce register usage.
@@ -62,7 +65,7 @@ The Virtual Machine allows you to
  - [ ] - Register spillage
  - [ ] - Code optimization
    - [ ] - Remove temporary blocks that coalesce registers in the same way
-   - [ ] - Implement constant folding / propagation
+   - [x] - Implement constant folding / propagation
  - [ ] - Emitting Minecraft schematic files
 
 ---

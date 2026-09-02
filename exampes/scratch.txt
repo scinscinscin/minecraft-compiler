@@ -1,9 +1,20 @@
 function main () {
-  write(0, 255);
-  return 0;
+  var a = 5;
+  var b = 6;
+
+  var value1 = a + b;
+  var value2 = multiply(a, b);
+  return value1;
 }
 
-function write(a, v){
-  *a = v;
-  return v;
+function multiply(a, b){
+  var ret = 0;
+  var i = 0;
+
+  while loop(i < b){
+    ret = ret + a;
+    i = i + 1;
+  }
+
+  return ret;
 }

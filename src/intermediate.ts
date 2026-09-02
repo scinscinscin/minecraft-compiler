@@ -1,5 +1,7 @@
 import {
   BinaryMachineInstruction,
+  compute_binary,
+  compute_unary,
   ConditionalJumpMachineInstruction,
   create_temporary_block,
   GotoLabelMachineInstruction,
@@ -12,6 +14,7 @@ import {
   UnaryMachineInstruction,
 } from "./compiler";
 import { TokenType } from "./lexer";
+import { ConstantCache } from "./optimizer";
 import { FunctionCompilationContext } from "./parser";
 import { color_graph } from "./utils/coloring";
 
@@ -41,6 +44,14 @@ export abstract class IRCode {
   }
 
   abstract to_machine_code(context: RelocatableUnit): void;
+
+  fold_constants(cache: ConstantCache): boolean {
+    return false;
+  }
+
+  optimize_out(): IRCode | null {
+    return null;
+  }
 }
 
 function handle_operand_read(existing: Operand, variable_name: string, context: VariableStackManager) {
@@ -57,7 +68,6 @@ function handle_operand_write(existing: Operand, variable_name: string, context:
   return { type: "ssa_variable", name: variable_name, index: latest_index } as Operand;
 }
 
-// TODO: replace this with something, soon
 export class Phi extends IRCode {
   target: Operand;
   sources: Operand[] = [];
@@ -188,6 +198,27 @@ export class BinaryInstruction extends IRCode {
     const target = context.to_machine_operand(this.target);
     context.emit(new BinaryMachineInstruction(target, left, right, this.op));
   }
+
+  fold_constants(cache: ConstantCache): boolean {
+    const left_candidate = cache.get(this.left);
+    const right_candidate = cache.get(this.right);
+
+    if (left_candidate != undefined) this.left = left_candidate;
+    if (right_candidate != undefined) this.right = right_candidate;
+
+    return left_candidate != undefined || right_candidate != undefined;
+  }
+
+  optimize_out(): IRCode | null {
+    if (this.left.type === "literal" && this.right.type === "literal") {
+      const operand = this.left.value;
+      const operand2 = this.right.value;
+
+      const computed_value: number = compute_binary(operand, operand2, this.op);
+      const new_operand: Operand = { type: "literal", is_parameter: false, value: computed_value };
+      return new MoveInstruction(this.target, new_operand);
+    } else return null;
+  }
 }
 
 export class LoadInstruction extends IRCode {
@@ -282,6 +313,23 @@ export class UnaryInstruction extends IRCode {
     const target = context.to_machine_operand(this.target);
     context.emit(new UnaryMachineInstruction(target, left, this.op));
   }
+
+  fold_constants(cache: ConstantCache): boolean {
+    const left_candidate = cache.get(this.left);
+    if (left_candidate != undefined) this.left = left_candidate;
+
+    return left_candidate != undefined;
+  }
+
+  optimize_out(): IRCode | null {
+    if (this.left.type === "literal" && this.left.is_parameter == false) {
+      const operand = this.left.value;
+      const computed_value: number = compute_unary(operand, this.op);
+
+      const new_operand: Operand = { type: "literal", is_parameter: false, value: computed_value };
+      return new MoveInstruction(this.target, new_operand);
+    } else return null;
+  }
 }
 
 export class MoveInstruction extends IRCode {
@@ -320,6 +368,24 @@ export class MoveInstruction extends IRCode {
     const source = context.to_machine_operand(this.source);
     const target = context.to_machine_operand(this.target);
     context.emit(new MoveMachineInstruction(target, source));
+  }
+
+  fold_constants(cache: ConstantCache): boolean {
+    if (this.source.type === "literal" && this.source.is_parameter == false) {
+      return cache.set(this.target, this.source);
+    }
+
+    if (this.source.type === "ssa_variable" || this.source.type === "temp_reg") {
+      const source_candidate = cache.get(this.source);
+
+      if (source_candidate != undefined) {
+        this.source = source_candidate;
+        cache.set(this.target, this.source);
+        return true;
+      }
+    }
+
+    return false;
   }
 }
 
@@ -369,6 +435,13 @@ export class ConditionalJump extends IRCode {
   change_label(new_label: string) {
     return new ConditionalJump(this.expression, new_label);
   }
+
+  fold_constants(cache: ConstantCache): boolean {
+    const expression_candidate = cache.get(this.expression);
+    if (expression_candidate != undefined) this.expression = expression_candidate;
+
+    return expression_candidate != undefined;
+  }
 }
 
 export class PushInstruction extends IRCode {
@@ -391,6 +464,13 @@ export class PushInstruction extends IRCode {
   to_machine_code(context: RelocatableUnit) {
     const value = context.to_machine_operand(this.value);
     context.emit(new PushMachineInstruction(value));
+  }
+
+  fold_constants(cache: ConstantCache): boolean {
+    const value_candidate = cache.get(this.value);
+    if (value_candidate != undefined) this.value = value_candidate;
+
+    return value_candidate != undefined;
   }
 }
 
@@ -453,27 +533,6 @@ export class FunctionExitInstruction extends IRCode {
   }
 }
 
-// THIS INTERMEDIATE INSTRUCTION IS NOT USED
-export class ReturnInstruction extends IRCode {
-  constructor(public value: Operand) {
-    super();
-  }
-
-  to_ssa(variable_name: string, context: VariableStackManager) {
-    this.value = handle_operand_read(this.value, variable_name, context);
-  }
-
-  to_stringified() {
-    return `return ${stringify_operand(this.value)}`;
-  }
-
-  to_machine_code(context: RelocatableUnit) {
-    const value = context.to_machine_operand(this.value);
-    context.emit(new MoveMachineInstruction({ type: "gpr", index: 0 }, value));
-    context.emit(new GotoLabelMachineInstruction("function_exit"));
-  }
-}
-
 export function determine_leaders(code: IRCode[]) {
   const leaders = [] as { leader: IRCode; labels: string[] }[];
 
@@ -526,6 +585,23 @@ export class BasicBlock {
 
   add_instruction(instruction: IRCode) {
     this.instructions.push(instruction);
+  }
+
+  remove_instruction(instruction: IRCode) {
+    if (this.instructions.findIndex((x) => x === instruction) === -1) return;
+
+    this.instructions = this.instructions.filter((x) => x !== instruction);
+    if (instruction instanceof Phi) {
+      if (instruction.target.type !== "ssa_variable")
+        throw new Error("Invariant: Phi instruction should have ssa_variable as target");
+
+      const var_name = instruction.target.name;
+      this.inserted_phi = this.inserted_phi.filter((x) => x !== var_name);
+    }
+  }
+
+  replace_instruction(old_instruction: IRCode, replacement: IRCode) {
+    this.instructions = this.instructions.map((x) => (x === old_instruction ? replacement : x));
   }
 
   successors: BasicBlock[] = [];
@@ -967,11 +1043,19 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
 
   // Construct the register interference graph by traversing each block backwards
   // with the list of live starting as the LIVE_OUT of each block
+  return { live_out: LIVE_OUT };
+}
+
+export function create_register_inference_graph(cfg: BasicBlock[]) {
+  const { live_out } = liveliness_analysis(cfg);
+
+  // Construct the register interference graph by traversing each block backwards
+  // with the list of live starting as the LIVE_OUT of each block
   const graph = new RegisterInterferenceGraph();
 
   for (let i = 0; i < cfg.length; i++) {
     const block = cfg[i];
-    let live = LIVE_OUT[i].filter((x) => x.type !== "literal");
+    let live = live_out[i].filter((x) => x.type !== "literal");
 
     for (const instruction of block.instructions.toReversed()) {
       // Determine what is defined and what is used in this instruction
@@ -1005,7 +1089,7 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
     }
   }
 
-  return { cfg, graph };
+  return graph;
 }
 
 export class RegisterInterferenceGraph {

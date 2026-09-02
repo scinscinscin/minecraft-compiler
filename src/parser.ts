@@ -55,6 +55,14 @@ export class FunctionCompilationContext {
     this.emitted.push(ir_code);
   }
 
+  remove_instruction(ir_code: IRCode) {
+    this.emitted = this.emitted.filter((x) => x !== ir_code);
+  }
+
+  replace_instruction(old_instruction: IRCode, replacement: IRCode) {
+    this.emitted = this.emitted.map((x) => (x === old_instruction ? replacement : x));
+  }
+
   used_registers = 0;
   get_next_temp_reg(): Operand {
     return { type: "temp_reg", index: this.used_registers++ };

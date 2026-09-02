@@ -3,14 +3,15 @@ import path from "path";
 import { lexerGenerator, TokenMetadata, TokenType, toStringifiedTokenType } from "./lexer";
 import { buildProductions, Sparse } from "@scinorandex/sparse";
 import { BaseNode, Program, Reducers } from "./parser";
-import { BasicBlock, liveliness_analysis, to_ssa } from "./intermediate";
+import { BasicBlock, create_register_inference_graph, to_ssa } from "./intermediate";
 import { compile, RelocatableUnit } from "./compiler";
 import { load } from "./linker";
 import { create_runner } from "./vm";
 import { start_repl } from "./repl";
+import { optimize } from "./optimizer";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/source.txt");
+const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/scratch.txt");
 
 async function main() {
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));
@@ -34,22 +35,25 @@ async function main() {
   const functions = rootNode.function_definitions.get_items_reversed();
   const units = functions.map((fn) => {
     const intermediate_representation = fn.compile();
-    console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
-    const ssa_representation = to_ssa(intermediate_representation);
-    const { cfg, graph } = liveliness_analysis(ssa_representation);
-    pretty_print(ssa_representation);
+    // console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
 
-    const compiled = compile(intermediate_representation, cfg, graph);
+    const ssa_representation = to_ssa(intermediate_representation);
+    const cfg = optimize(intermediate_representation, ssa_representation);
+
+    const register_interference_graph = create_register_inference_graph(cfg);
+    pretty_print(cfg);
+
+    const compiled = compile(intermediate_representation, cfg, register_interference_graph);
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
   });
 
   const linked = load(units);
+  console.log("Printing linked code: ================");
   for (let i = 0; i < linked.length; i++) {
     const instruction = linked[i];
     console.log(`[${i.toString().padStart(2, "0")}]: ${instruction.to_stringified()}`);
   }
 
-  console.clear();
   start_repl(create_runner(linked));
 }
 
