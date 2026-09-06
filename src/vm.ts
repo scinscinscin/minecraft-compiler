@@ -32,9 +32,14 @@ export class Environment {
     if (operand.type === "base_pointer") return this.base_pointer;
     if (operand.type === "return_register") return this.return_register;
     if (operand.type === "constant") return operand.value;
+
     // Add two here because operand.index is the index of the parameter in the function
     // +2 because the first two parameters are the base pointer and return address
     if (operand.type === "parameter") return this.memory[this.base_pointer + operand.index + 2];
+
+    // Add one here because operand.index is the index of the variable inside the function
+    if (operand.type === "variable") return this.memory[this.base_pointer - (operand.index + 1)];
+
     throw new Error("Invariant: Operand should not be null. " + operand);
   }
 
@@ -45,7 +50,8 @@ export class Environment {
     else if (operand.type === "base_pointer") this.base_pointer = value;
     else if (operand.type === "return_register") this.return_register = value;
     else if (operand.type === "constant") return;
-    else if (operand.type === "parameter") this.memory[this.base_pointer + operand.index] = value;
+    else if (operand.type === "parameter") this.memory[this.base_pointer + operand.index + 2] = value;
+    else if (operand.type === "variable") this.memory[this.base_pointer - (operand.index + 1)] = value;
     else throw new Error("Invariant: Operand should not be null. " + operand);
   }
 
@@ -78,6 +84,12 @@ export class Runner {
     logger.log(`SP: [${this.environment.stack_pointer}]`);
     logger.log(`BP: [${this.environment.base_pointer}]`);
     logger.log(`Return register: [${this.environment.return_register}]`);
+  }
+
+  dump_memory(logger: Logger) {
+    for (let i = 255; i >= this.environment.stack_pointer; i--) {
+      logger.log(`[${i}]: ${this.environment.memory[i]}`);
+    }
   }
 
   dump_stack(logger: Logger) {

@@ -19,6 +19,7 @@ export function start_repl(runner: Runner) {
       if (line === "") runner.tick(logger);
       else if (line === "dump r") runner.dump_registers(logger);
       else if (line === "dump s") runner.dump_stack(logger);
+      else if (line === "dump m") runner.dump_memory(logger);
       else if (line === "ip") runner.dump_ip(logger);
       else if (line.startsWith("peek")) {
         const address = parseInt(line.split(" ")[1]);

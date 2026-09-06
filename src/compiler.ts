@@ -2,6 +2,7 @@ import {
   BasicBlock,
   compare_operands,
   ConditionalJump,
+  constraint_registers,
   JumpInstruction,
   Operand,
   Phi,
@@ -26,7 +27,8 @@ export type MachineOperand =
   | { type: "base_pointer" }
   | { type: "constant"; value: number }
   | { type: "return_register" }
-  | { type: "parameter"; index: number };
+  | { type: "parameter"; index: number }
+  | { type: "variable"; index: number };
 
 function stringify_machine_operand(operand: MachineOperand) {
   if (operand.type === "gpr") return `gpr${operand.index}`;
@@ -37,6 +39,9 @@ function stringify_machine_operand(operand: MachineOperand) {
   if (operand.type === "return_register") return "return_register";
   // Add two for parameter because 0 is base pointer and 1 is for the return address
   if (operand.type === "parameter") return `stack[bp + ${operand.index + 2}]`;
+
+  // Add one for variable because 0 is the base pointer and -1 is the start of variable spill space
+  if (operand.type === "variable") return `stack[bp - ${operand.index + 1}]`;
 }
 
 function compare_machine_operands(a: MachineOperand, b: MachineOperand) {
@@ -49,6 +54,7 @@ function compare_machine_operands(a: MachineOperand, b: MachineOperand) {
   if (a.type === "constant" && b.type === "constant") return a.value === b.value;
   if (a.type === "return_register" && b.type === "return_register") return true;
   if (a.type === "parameter" && b.type === "parameter") return a.index === b.index;
+  if (a.type === "variable" && b.type === "variable") return a.index === b.index;
 
   return false;
 }
@@ -148,7 +154,8 @@ export class MoveMachineInstruction extends MachineInstruction implements Linked
   }
 
   to_machine_code(context: LinkerContext) {
-    context.emit(this);
+    const same = compare_machine_operands(this.target, this.source);
+    if (!same) context.emit(this);
   }
 
   execute(environment: Environment) {
@@ -344,6 +351,7 @@ export class RelocatableUnit {
     public readonly graph_solution: ChaitinOutput,
     public readonly edge_mapping: EdgeMapping,
     public readonly basic_blocks: BasicBlock[],
+    public readonly compilation_context: FunctionCompilationContext,
   ) {}
 
   to_machine_operand(operand: Operand): MachineOperand {
@@ -354,8 +362,17 @@ export class RelocatableUnit {
       else return { type: "constant", value: operand.value };
     }
 
-    const index = this.graph._index_of(operand);
-    return { type: "gpr", index: this.graph_solution.color_map[index] };
+    if (operand.type === "ssa_variable" || operand.type === "temp_reg") {
+      const index = this.graph._index_of(operand);
+      return { type: "gpr", index: this.graph_solution.color_map[index] };
+    }
+
+    if (operand.type === "variable_spill") {
+      const variable_index = this.compilation_context.variables.indexOf(operand.name);
+      return { type: "variable", index: variable_index };
+    }
+
+    throw new Error("Unknown operand type: ");
   }
 
   get_basic_block(label: string) {
@@ -369,8 +386,16 @@ export class RelocatableUnit {
 }
 
 export function create_temporary_block(graph_edges: { target: MachineOperand; source: MachineOperand }[]) {
-  const queue = [...graph_edges];
   const commands = [] as MachineInstruction[];
+  const queue = [] as { target: MachineOperand; source: MachineOperand }[];
+
+  // handle any case where it's a register -> variable spill location
+  for (const edge of graph_edges) {
+    // check if target is variable spill
+    if (edge.target.type === "variable") {
+      commands.push(new MoveMachineInstruction(edge.target, edge.source));
+    } else queue.push(edge);
+  }
 
   // Get all the edges that depend on the value stored in the target operand
   const get_dependents = (target: MachineOperand) => queue.filter((x) => compare_machine_operands(x.source, target));
@@ -401,15 +426,15 @@ export function create_temporary_block(graph_edges: { target: MachineOperand; so
   };
 
   const pops: MachineInstruction[] = [];
-
   next_edge: while (queue.length > 0) {
     const { target, source } = queue[0];
 
-    // check if thera are things that depend on target
+    // check if there are things that depend on the value stored at target
     const target_dependents = queue.filter((x) => compare_machine_operands(x.source, target));
     if (target_dependents.length === 0) {
       // nothing depends on the target, so we can safely emit a move from source to target and remove the edge from the queue
       commands.push(new MoveMachineInstruction(target, source));
+
       queue.shift();
       continue next_edge;
     } else {
@@ -439,13 +464,9 @@ export function create_temporary_block(graph_edges: { target: MachineOperand; so
   return commands;
 }
 
-export function compile(
-  context: FunctionCompilationContext,
-  blocks: BasicBlock[],
-  graph: RegisterInterferenceGraph,
-): RelocatableUnit {
+export function compile(context: FunctionCompilationContext, blocks: BasicBlock[], gpr_count: number): RelocatableUnit {
   // solve the register interferece graph
-  const register_solution = graph.solve(7);
+  const { graph, solution: register_solution } = constraint_registers(blocks, context, gpr_count);
 
   const intermediates = context.emitted;
   const variables = context.variables;
@@ -460,8 +481,6 @@ export function compile(
     const new_predecessors = [] as { predecessor: BasicBlock; associations: { target: Operand; source: Operand }[] }[];
     const emit = (block: BasicBlock, target: Operand, source: Operand) => {
       if (compare_operands(target, source)) return;
-
-      // Comment this block if you want to force to edge transitions even if its pointless
       const op1_assigned = graph._index_of(target).toString();
       const op2_assigned = graph._index_of(source).toString();
       if (register_solution.color_map[op1_assigned] === register_solution.color_map[op2_assigned]) return;
@@ -485,7 +504,7 @@ export function compile(
     edge_mapping.push({ basic_block: block, new_predecessors });
   }
 
-  const relocatable_unit = new RelocatableUnit(graph, register_solution, edge_mapping, blocks);
+  const relocatable_unit = new RelocatableUnit(graph, register_solution, edge_mapping, blocks, context);
 
   // Push base pointer to stack
   // Copy current value of stack pointer to base pointer
@@ -503,7 +522,7 @@ export function compile(
   );
 
   // Push registers we'll clobber to the stack
-  const clobbered = [...new Set(Object.values(register_solution.color_map))];
+  const clobbered = [...new Set(Object.values(register_solution.color_map))].filter((x) => x != -1);
   for (const clobber of clobbered) relocatable_unit.emit(new PushMachineInstruction({ type: "gpr", index: clobber }));
 
   const finalizers = blocks.map((e) => e.instructions[e.instructions.length - 1]);

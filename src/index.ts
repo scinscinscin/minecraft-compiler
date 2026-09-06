@@ -3,7 +3,7 @@ import path from "path";
 import { lexerGenerator, TokenMetadata, TokenType, toStringifiedTokenType } from "./lexer";
 import { buildProductions, Sparse } from "@scinorandex/sparse";
 import { BaseNode, Program, Reducers } from "./parser";
-import { BasicBlock, create_register_inference_graph, to_ssa } from "./intermediate";
+import { BasicBlock, constraint_registers, create_register_inference_graph, to_ssa } from "./intermediate";
 import { compile, RelocatableUnit } from "./compiler";
 import { load } from "./linker";
 import { create_runner } from "./vm";
@@ -11,7 +11,8 @@ import { start_repl } from "./repl";
 import { optimize } from "./optimizer";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/scratch.txt");
+const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/fib.txt");
+const GPR_COUNT = 2;
 
 async function main() {
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));
@@ -39,11 +40,7 @@ async function main() {
 
     const ssa_representation = to_ssa(intermediate_representation);
     const cfg = optimize(intermediate_representation, ssa_representation);
-
-    const register_interference_graph = create_register_inference_graph(cfg);
-    pretty_print(cfg);
-
-    const compiled = compile(intermediate_representation, cfg, register_interference_graph);
+    const compiled = compile(intermediate_representation, cfg, GPR_COUNT);
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
   });
 
@@ -57,7 +54,7 @@ async function main() {
   start_repl(create_runner(linked));
 }
 
-function pretty_print(x: BasicBlock[]) {
+export function pretty_print(x: BasicBlock[]) {
   for (const b of x) console.log(b.instructions.map((i) => i.to_stringified()));
 }
 

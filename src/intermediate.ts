@@ -16,7 +16,19 @@ import {
 import { TokenType } from "./lexer";
 import { ConstantCache } from "./optimizer";
 import { FunctionCompilationContext } from "./parser";
-import { color_graph } from "./utils/coloring";
+import { color_graph, Heuristics, new_color_graph } from "./utils/coloring";
+
+export type Operand =
+  | { type: "variable"; name: string }
+  | { type: "temp_reg"; index: number }
+  | { type: "literal"; is_parameter: boolean; value: number }
+  | { type: "ssa_variable"; name: string; index: number }
+  | { type: "return_register" }
+  | { type: "variable_spill"; name: string };
+
+function stringify_operand(operand: Operand) {
+  return JSON.stringify(operand);
+}
 
 export abstract class IRCode {
   check_if_redefines_variable(variable_name: string): boolean {
@@ -52,6 +64,8 @@ export abstract class IRCode {
   optimize_out(): IRCode | null {
     return null;
   }
+
+  abstract replace_operands(old_operand: Operand, new_operand: Operand): void;
 }
 
 function handle_operand_read(existing: Operand, variable_name: string, context: VariableStackManager) {
@@ -102,6 +116,11 @@ export class Phi extends IRCode {
   }
 
   to_machine_code(context: RelocatableUnit) {}
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.target)) this.target = to;
+    this.sources = this.sources.map((x) => (compare_operands(x, from) ? to : x));
+  }
 }
 
 export class GotoLabel extends IRCode {
@@ -143,17 +162,8 @@ export class GotoLabel extends IRCode {
 
     context.emit(new GotoLabelMachineInstruction(this.label));
   }
-}
 
-export type Operand =
-  | { type: "variable"; name: string }
-  | { type: "temp_reg"; index: number }
-  | { type: "literal"; is_parameter: boolean; value: number }
-  | { type: "ssa_variable"; name: string; index: number }
-  | { type: "return_register" };
-
-function stringify_operand(operand: Operand) {
-  return JSON.stringify(operand);
+  replace_operands(old_operand: Operand, new_operand: Operand) {}
 }
 
 export class BinaryInstruction extends IRCode {
@@ -219,6 +229,12 @@ export class BinaryInstruction extends IRCode {
       return new MoveInstruction(this.target, new_operand);
     } else return null;
   }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.left)) this.left = to;
+    if (compare_operands(from, this.right)) this.right = to;
+    if (compare_operands(from, this.target)) this.target = to;
+  }
 }
 
 export class LoadInstruction extends IRCode {
@@ -251,6 +267,10 @@ export class LoadInstruction extends IRCode {
     const target = context.to_machine_operand(this.target);
     context.emit(new LoadMachineInstruction(target, source));
   }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.source)) this.source = to;
+  }
 }
 
 export class StoreInstruction extends IRCode {
@@ -278,6 +298,11 @@ export class StoreInstruction extends IRCode {
     const source = context.to_machine_operand(this.source);
     const target = context.to_machine_operand(this.target);
     context.emit(new StoreMachineInstruction(target, source));
+  }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.source)) this.source = to;
+    if (compare_operands(from, this.target)) this.target = to;
   }
 }
 
@@ -329,6 +354,11 @@ export class UnaryInstruction extends IRCode {
       const new_operand: Operand = { type: "literal", is_parameter: false, value: computed_value };
       return new MoveInstruction(this.target, new_operand);
     } else return null;
+  }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.left)) this.left = to;
+    if (compare_operands(from, this.target)) this.target = to;
   }
 }
 
@@ -387,6 +417,11 @@ export class MoveInstruction extends IRCode {
 
     return false;
   }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.source)) this.source = to;
+    if (compare_operands(from, this.target)) this.target = to;
+  }
 }
 
 export class JumpInstruction extends IRCode {
@@ -405,6 +440,8 @@ export class JumpInstruction extends IRCode {
   change_label(new_label: string) {
     return new JumpInstruction(new_label);
   }
+
+  replace_operands(from: Operand, to: Operand) {}
 }
 
 export class ConditionalJump extends IRCode {
@@ -442,6 +479,10 @@ export class ConditionalJump extends IRCode {
 
     return expression_candidate != undefined;
   }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.expression)) this.expression = to;
+  }
 }
 
 export class PushInstruction extends IRCode {
@@ -471,6 +512,10 @@ export class PushInstruction extends IRCode {
     if (value_candidate != undefined) this.value = value_candidate;
 
     return value_candidate != undefined;
+  }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.value)) this.value = to;
   }
 }
 
@@ -513,6 +558,10 @@ export class FunctionCallInstruction extends IRCode {
       ),
     );
   }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.target)) this.target = to;
+  }
 }
 
 export class FunctionExitInstruction extends IRCode {
@@ -531,6 +580,8 @@ export class FunctionExitInstruction extends IRCode {
   to_machine_code(context: RelocatableUnit) {
     // context.emit(new PopMachineInstruction({ type: "instruction_pointer" }));
   }
+
+  replace_operands(from: Operand, to: Operand) {}
 }
 
 export function determine_leaders(code: IRCode[]) {
@@ -598,6 +649,26 @@ export class BasicBlock {
       const var_name = instruction.target.name;
       this.inserted_phi = this.inserted_phi.filter((x) => x !== var_name);
     }
+  }
+
+  prepend_instruction(ir: IRCode, to_prepend: IRCode) {
+    // inserts new_instruction before instruction
+    const new_instructions = [] as IRCode[];
+    for (const instruction of this.instructions) {
+      if (instruction === ir) new_instructions.push(to_prepend);
+      new_instructions.push(instruction);
+    }
+    this.instructions = new_instructions;
+  }
+
+  append_instruction(ir: IRCode, to_append: IRCode) {
+    // inserts new_instruction after instruction
+    const new_instructions = [] as IRCode[];
+    for (const instruction of this.instructions) {
+      new_instructions.push(instruction);
+      if (instruction === ir) new_instructions.push(to_append);
+    }
+    this.instructions = new_instructions;
   }
 
   replace_instruction(old_instruction: IRCode, replacement: IRCode) {
@@ -938,12 +1009,11 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
   // Need to compute USE and DEF per block
   // Def - variables defined in B
   // Use - variables used before being defined in B
-  const use_def: { use: OperandSet; def: OperandSet; phi_uses: OperandSet }[] = [];
+  const use_def: { use: OperandSet; def: OperandSet }[] = [];
   for (let i = 0; i < cfg.length; i++) {
     const block = cfg[i];
     const def: OperandSet = [];
     const use: OperandSet = [];
-    const phi_uses: OperandSet = [];
 
     for (const instruction of block.instructions) {
       // check if the instruction defines a variable
@@ -952,22 +1022,17 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
 
       // add inputs to use if not present in def
       for (const input of inputs) {
-        if (input.type !== "literal") if (!def.some((x) => compare_operands(x, input))) use.push(input);
+        if (input.type !== "literal" && input.type !== "variable_spill")
+          if (!def.some((x) => compare_operands(x, input))) use.push(input);
       }
 
       // add defined to def if not present
       for (const defined_variable of defined)
-        if (defined_variable.type !== "literal")
+        if (defined_variable.type !== "literal" && defined_variable.type !== "variable_spill")
           if (!def.some((x) => compare_operands(x, defined_variable))) def.push(defined_variable);
-
-      if (instruction instanceof Phi) {
-        // add phi uses to phi uses
-        for (const phi_use of instruction.sources)
-          if (phi_use.type !== "literal") if (!def.some((x) => compare_operands(x, phi_use))) phi_uses.push(phi_use);
-      }
     }
 
-    use_def[i] = { use, def, phi_uses };
+    use_def[i] = { use, def };
   }
 
   // console.log("Printing use_def for each block");
@@ -1137,10 +1202,35 @@ export class RegisterInterferenceGraph {
   }
 
   solve(register_count = 7) {
+    const graph = this;
+
+    const heuristics: Heuristics = {
+      good_nodes: function (_candidates: string[]) {
+        const candidates = _candidates.map((x) => parseInt(x));
+
+        for (const candidate of candidates) {
+          const node = graph.list[candidate];
+          if (node.type === "variable_spill") return candidate.toString();
+        }
+
+        return _candidates[0];
+      },
+
+      bad_nodes: function (_candidates: string[]) {
+        const candidates = _candidates.map((x) => parseInt(x));
+
+        for (const candidate of candidates) {
+          const node = graph.list[candidate];
+          if (node.type === "ssa_variable") return candidate.toString();
+        }
+
+        return _candidates[0];
+      },
+    };
+
     const adj_list = {} as { [key: string]: string[] };
     for (const node in this.adj_list) adj_list[node.toString()] = this.adj_list[node].map((x) => x.toString());
-    const color_map = color_graph(adj_list, register_count);
-    return color_map;
+    return new_color_graph(adj_list, register_count, heuristics);
   }
 }
 
@@ -1155,23 +1245,6 @@ function combine_operand_sets_n(sets: OperandSet[]) {
       const has_operand = ret.some((x) => compare_operands(x, operand));
       if (!has_operand) ret.push(operand);
     }
-  }
-
-  return ret;
-}
-
-function intersection(a: OperandSet, b: OperandSet) {
-  const ret = [] as OperandSet;
-  for (const operand of a) if (b.some((x) => compare_operands(x, operand))) ret.push(operand);
-  return ret;
-}
-
-function combine_operand_sets(a: OperandSet, b: OperandSet) {
-  const ret = [...a] as OperandSet;
-
-  for (const operand of b) {
-    const has_operand = ret.some((x) => compare_operands(x, operand));
-    if (!has_operand) ret.push(operand);
   }
 
   return ret;
@@ -1194,6 +1267,68 @@ export function compare_operands(a: Operand, b: Operand) {
   if (a.type === "temp_reg" && b.type === "temp_reg") return a.index === b.index;
   if (a.type === "ssa_variable" && b.type === "ssa_variable") return a.name === b.name && a.index === b.index;
   if (a.type === "return_register" && b.type === "return_register") return true;
+  if (a.type === "variable_spill" && b.type === "variable_spill") return a.name === b.name;
 
   return false;
+}
+
+export function constraint_registers(cfg: BasicBlock[], context: FunctionCompilationContext, register_count: number) {
+  // Fix CFG so that operations inside it can be performed with only a certain number of registers
+  const all_instructions = cfg.flatMap((x) => x.instructions);
+  const graph = create_register_inference_graph(cfg);
+  const solution = graph.solve(register_count);
+
+  function prepend_instruction(instruction: IRCode, new_instruction: IRCode) {
+    context.prepend_instruction(instruction, new_instruction);
+    for (const block of cfg) block.prepend_instruction(instruction, new_instruction);
+  }
+
+  function append_instruction(instruction: IRCode, new_instruction: IRCode) {
+    context.append_instruction(instruction, new_instruction);
+    for (const block of cfg) block.append_instruction(instruction, new_instruction);
+  }
+
+  const bad_operands = solution.bad_nodes.map((x) => graph.list[parseInt(x)]);
+  const filtered = bad_operands.filter((x) => x.type === "ssa_variable");
+  if (filtered.length === 0) {
+    // We know the graph is solved if all the bad bodes are variable spills
+    // If there is a bad node that isn't a variable spill, we still haven't solved it
+    const actually_solved =
+      Object.keys(solution.color_map).filter(
+        (x) => solution.color_map[x] === -1 && graph.list[parseInt(x)].type !== "variable_spill",
+      ).length === 0;
+
+    if (actually_solved) return { graph, solution };
+    else throw new Error("Invariant: Could not solve graph");
+  }
+
+  for (const bad_operand of filtered) {
+    // console.log("Fixing", bad_operand);
+    instr: for (const instruction of all_instructions) {
+      if (instruction instanceof Phi) {
+        instruction.replace_operands(bad_operand, { type: "variable_spill", name: bad_operand.name });
+        continue instr;
+      }
+
+      // check if instruction writes or reads operands
+      // if it is being used as an input then we need to store it to a temporary register
+      const inputs = instruction.get_inputs();
+      if (inputs.some((x) => compare_operands(x, bad_operand))) {
+        const temp = context.get_next_temp_reg();
+        const load_instruction = new MoveInstruction(temp, { type: "variable_spill", name: bad_operand.name });
+        prepend_instruction(instruction, load_instruction);
+        instruction.replace_operands(bad_operand, temp);
+      }
+
+      const outputs = instruction.get_outputs();
+      if (outputs.some((x) => compare_operands(x, bad_operand))) {
+        const temp = context.get_next_temp_reg();
+        const store_instruction = new MoveInstruction({ type: "variable_spill", name: bad_operand.name }, temp);
+        instruction.replace_operands(bad_operand, temp);
+        append_instruction(instruction, store_instruction);
+      }
+    }
+  }
+
+  return constraint_registers(cfg, context, register_count);
 }

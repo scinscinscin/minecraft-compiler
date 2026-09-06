@@ -63,6 +63,26 @@ export class FunctionCompilationContext {
     this.emitted = this.emitted.map((x) => (x === old_instruction ? replacement : x));
   }
 
+  prepend_instruction(instruction: IRCode, new_instruction: IRCode) {
+    // inserts new_instruction before instruction
+    const new_emitted = [] as IRCode[];
+    for (const ir of this.emitted) {
+      if (ir === instruction) new_emitted.push(new_instruction);
+      new_emitted.push(ir);
+    }
+    this.emitted = new_emitted;
+  }
+
+  append_instruction(instruction: IRCode, new_instruction: IRCode) {
+    // inserts new_instruction after instruction
+    const new_emitted = [] as IRCode[];
+    for (const ir of this.emitted) {
+      new_emitted.push(ir);
+      if (ir === instruction) new_emitted.push(new_instruction);
+    }
+    this.emitted = new_emitted;
+  }
+
   used_registers = 0;
   get_next_temp_reg(): Operand {
     return { type: "temp_reg", index: this.used_registers++ };
