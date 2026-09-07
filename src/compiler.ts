@@ -1,3 +1,4 @@
+import { pretty_print } from ".";
 import {
   BasicBlock,
   compare_operands,
@@ -11,7 +12,7 @@ import {
 import { TokenType } from "./lexer";
 import { LinkedInstruction, LinkerContext } from "./linker";
 import { FunctionCompilationContext } from "./parser";
-import { ChaitinOutput } from "./utils/coloring";
+import { ChaitinOutput, greedy_coloring } from "./utils/coloring";
 import { Environment } from "./vm";
 
 abstract class MachineInstruction {
@@ -359,6 +360,8 @@ export class RelocatableUnit {
   constructor(
     public readonly graph: RegisterInterferenceGraph,
     public readonly graph_solution: ChaitinOutput,
+    public readonly register_spill_graph: RegisterInterferenceGraph,
+    public readonly register_spill_solution: ChaitinOutput,
     public readonly edge_mapping: EdgeMapping,
     public readonly basic_blocks: BasicBlock[],
     public readonly compilation_context: FunctionCompilationContext,
@@ -384,6 +387,13 @@ export class RelocatableUnit {
 
     if (operand.type === "global_variable") {
       return { type: "global_variable", name: operand.name };
+    }
+
+    if (operand.type === "register_spill") {
+      const variable_count = this.compilation_context.variables.length;
+      const register_spill_container =
+        this.register_spill_solution.color_map[this.register_spill_graph._index_of(operand)];
+      return { type: "variable", index: variable_count + register_spill_container };
     }
 
     throw new Error("Unknown operand type: ");
@@ -478,12 +488,43 @@ export function create_temporary_block(graph_edges: { target: MachineOperand; so
   return commands;
 }
 
+function determine_register_spill_count(graph: RegisterInterferenceGraph) {
+  const indices = graph.list
+    .map((x, i) => [x, i] as [Operand, number])
+    .filter((x) => x[0].type === "register_spill")
+    .map((x) => x[1]);
+
+  // rebuild the graph with just indices
+  const new_graph = new RegisterInterferenceGraph();
+
+  const existing = graph.get_adj_list();
+  outer: for (let i = 0; i < existing.length; i++) {
+    if (indices.includes(i) == false) continue outer;
+
+    const x = graph.list[i];
+    inner: for (const adjacent of existing[i]) {
+      if (indices.includes(adjacent) == false) continue inner;
+
+      const y = graph.list[adjacent];
+      new_graph.create_edge(x, y);
+    }
+  }
+
+  const register_spill_count = greedy_coloring(new_graph.get_adj_list());
+  const solution = new_graph.solve(register_spill_count);
+  return { solution, register_spill_count, graph: new_graph };
+}
+
 export function compile(context: FunctionCompilationContext, blocks: BasicBlock[], gpr_count: number): RelocatableUnit {
   // solve the register interferece graph
   const { graph, solution: register_solution } = constraint_registers(blocks, context, gpr_count);
+  pretty_print(blocks);
 
-  const intermediates = context.emitted;
-  const variables = context.variables;
+  // determine how many register spill locations we need
+  const register_spillage_solution = determine_register_spill_count(graph);
+
+  // The number of spillage locations to reserve in the stack
+  const spillage_locations = context.variables.length + register_spillage_solution.register_spill_count;
 
   // add some context to relocable_unit before we codegen the instructions
   // for each basic block, check if it has phi nodes
@@ -518,7 +559,10 @@ export function compile(context: FunctionCompilationContext, blocks: BasicBlock[
     edge_mapping.push({ basic_block: block, new_predecessors });
   }
 
-  const relocatable_unit = new RelocatableUnit(graph, register_solution, edge_mapping, blocks, context);
+  // prettier-ignore
+  const relocatable_unit = new RelocatableUnit(graph, register_solution, 
+      register_spillage_solution.graph, register_spillage_solution.solution,
+      edge_mapping, blocks, context);
 
   // Push base pointer to stack
   // Copy current value of stack pointer to base pointer
@@ -530,7 +574,7 @@ export function compile(context: FunctionCompilationContext, blocks: BasicBlock[
     new BinaryMachineInstruction(
       { type: "stack_pointer" },
       { type: "stack_pointer" },
-      { type: "constant", value: variables.length },
+      { type: "constant", value: spillage_locations },
       TokenType.MINUS,
     ),
   );
@@ -540,6 +584,8 @@ export function compile(context: FunctionCompilationContext, blocks: BasicBlock[
   for (const clobber of clobbered) relocatable_unit.emit(new PushMachineInstruction({ type: "gpr", index: clobber }));
 
   const finalizers = blocks.map((e) => e.instructions[e.instructions.length - 1]);
+  const intermediates = context.emitted;
+
   for (const intermediate of intermediates) {
     // console.log("- Processing", intermediate);
     // check if instruction is a finalizer
@@ -616,7 +662,7 @@ export function compile(context: FunctionCompilationContext, blocks: BasicBlock[
     new BinaryMachineInstruction(
       { type: "stack_pointer" },
       { type: "stack_pointer" },
-      { type: "constant", value: variables.length },
+      { type: "constant", value: spillage_locations },
       TokenType.PLUS,
     ),
   );

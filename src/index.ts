@@ -33,7 +33,6 @@ async function main() {
   const rootNode = parser.parse().result as Program | null;
   if (rootNode == null) throw new Error("Invariant: Root node should not be null. ");
 
-  console.log(rootNode.definitions);
   const globals = rootNode.definitions.variables.get_items_reversed();
   const functions = rootNode.definitions.functions.get_items_reversed();
 

@@ -1,12 +1,14 @@
-var global_variable = 0;
-
 function main () {
-  var value = 67;
-  *global_variable = value;
+  var a = 4;
+  var b = 0;
 
-  return get_global_variable();
-}
+  if(a == 1){
+    b = 1;
+  } else if(b == 2){
+    b = 2;
+  } else {
+    b = 3;
+  }
 
-function get_global_variable () {
-  return *0;
+  return b;
 }

@@ -158,3 +158,27 @@ export function color_graph(graph: AdjList, n: number) {
 }
 
 export type ChaitinOutput = ReturnType<typeof color_graph>;
+
+export function greedy_coloring(adj_list: number[][]): number {
+  const node_count = adj_list.length;
+  const colors = new Array(node_count).fill(-1);
+
+  let max_colors = 0;
+
+  for (let v = 0; v < node_count; v++) {
+    const used = new Set<number>();
+
+    // for all colored neighbors, add their colors to used
+    for (const u of adj_list[v]) if (colors[u] !== -1) used.add(colors[u]);
+
+    // determine the next color available and assign it to the current node being processed
+    let color = 0;
+    while (used.has(color)) color++;
+    colors[v] = color;
+
+    // set max number of colors
+    max_colors = Math.max(max_colors, color);
+  }
+
+  return max_colors + 1;
+}

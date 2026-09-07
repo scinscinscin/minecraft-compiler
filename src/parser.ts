@@ -84,6 +84,11 @@ export class FunctionCompilationContext {
     this.emitted = new_emitted;
   }
 
+  used_regsiter_spills = 0;
+  get_next_register_spill(): Operand {
+    return { type: "register_spill", index: this.used_regsiter_spills++ };
+  }
+
   used_registers = 0;
   get_next_temp_reg(): Operand {
     return { type: "temp_reg", index: this.used_registers++ };

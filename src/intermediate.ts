@@ -25,8 +25,26 @@ export type Operand =
   | { type: "literal"; is_parameter: boolean; value: number }
   | { type: "ssa_variable"; name: string; index: number }
   | { type: "return_register" }
-  | { type: "variable_spill"; name: string };
+  | { type: "variable_spill"; name: string }
+  | { type: "register_spill"; index: number };
 
+export function compare_operands(a: Operand, b: Operand) {
+  if (a.type !== b.type) return false;
+
+  if (a.type === "variable" && b.type === "variable") return a.name === b.name;
+  if (a.type === "global_variable" && b.type === "global_variable") return a.name === b.name;
+  if (a.type === "literal" && b.type === "literal") {
+    if (a.is_parameter !== b.is_parameter) return false;
+    return a.value === b.value;
+  }
+  if (a.type === "temp_reg" && b.type === "temp_reg") return a.index === b.index;
+  if (a.type === "ssa_variable" && b.type === "ssa_variable") return a.name === b.name && a.index === b.index;
+  if (a.type === "return_register" && b.type === "return_register") return true;
+  if (a.type === "variable_spill" && b.type === "variable_spill") return a.name === b.name;
+  if (a.type === "register_spill" && b.type === "register_spill") return a.index === b.index;
+
+  return false;
+}
 function stringify_operand(operand: Operand) {
   return JSON.stringify(operand);
 }
@@ -167,6 +185,62 @@ export class GotoLabel extends IRCode {
   replace_operands(old_operand: Operand, new_operand: Operand) {}
 }
 
+export class UnaryInstruction extends IRCode {
+  constructor(
+    public target: Operand,
+    public left: Operand,
+    public readonly op: TokenType,
+  ) {
+    super();
+  }
+
+  get_inputs() {
+    return [this.left];
+  }
+
+  get_outputs() {
+    return [this.target];
+  }
+
+  to_ssa(variable_name: string, context: VariableStackManager) {
+    this.left = handle_operand_read(this.left, variable_name, context);
+    this.target = handle_operand_write(this.target, variable_name, context);
+  }
+
+  to_stringified() {
+    const op = TokenType[this.op];
+    return `${stringify_operand(this.target)} = ${stringify_operand(this.left)} ${op}`;
+  }
+
+  to_machine_code(context: RelocatableUnit) {
+    const left = context.to_machine_operand(this.left);
+    const target = context.to_machine_operand(this.target);
+    context.emit(new UnaryMachineInstruction(target, left, this.op));
+  }
+
+  fold_constants(cache: ConstantCache): boolean {
+    const left_candidate = cache.get(this.left);
+    if (left_candidate != undefined) this.left = left_candidate;
+
+    return left_candidate != undefined;
+  }
+
+  optimize_out(): IRCode | null {
+    if (this.left.type === "literal" && this.left.is_parameter == false) {
+      const operand = this.left.value;
+      const computed_value: number = compute_unary(operand, this.op);
+
+      const new_operand: Operand = { type: "literal", is_parameter: false, value: computed_value };
+      return new MoveInstruction(this.target, new_operand);
+    } else return null;
+  }
+
+  replace_operands(from: Operand, to: Operand) {
+    if (compare_operands(from, this.left)) this.left = to;
+    if (compare_operands(from, this.target)) this.target = to;
+  }
+}
+
 export class BinaryInstruction extends IRCode {
   constructor(
     public target: Operand,
@@ -304,62 +378,6 @@ export class StoreInstruction extends IRCode {
 
   replace_operands(from: Operand, to: Operand) {
     if (compare_operands(from, this.source)) this.source = to;
-    if (compare_operands(from, this.target)) this.target = to;
-  }
-}
-
-export class UnaryInstruction extends IRCode {
-  constructor(
-    public target: Operand,
-    public left: Operand,
-    public readonly op: TokenType,
-  ) {
-    super();
-  }
-
-  get_inputs() {
-    return [this.left];
-  }
-
-  get_outputs() {
-    return [this.target];
-  }
-
-  to_ssa(variable_name: string, context: VariableStackManager) {
-    this.left = handle_operand_read(this.left, variable_name, context);
-    this.target = handle_operand_write(this.target, variable_name, context);
-  }
-
-  to_stringified() {
-    const op = TokenType[this.op];
-    return `${stringify_operand(this.target)} = ${stringify_operand(this.left)} ${op}`;
-  }
-
-  to_machine_code(context: RelocatableUnit) {
-    const left = context.to_machine_operand(this.left);
-    const target = context.to_machine_operand(this.target);
-    context.emit(new UnaryMachineInstruction(target, left, this.op));
-  }
-
-  fold_constants(cache: ConstantCache): boolean {
-    const left_candidate = cache.get(this.left);
-    if (left_candidate != undefined) this.left = left_candidate;
-
-    return left_candidate != undefined;
-  }
-
-  optimize_out(): IRCode | null {
-    if (this.left.type === "literal" && this.left.is_parameter == false) {
-      const operand = this.left.value;
-      const computed_value: number = compute_unary(operand, this.op);
-
-      const new_operand: Operand = { type: "literal", is_parameter: false, value: computed_value };
-      return new MoveInstruction(this.target, new_operand);
-    } else return null;
-  }
-
-  replace_operands(from: Operand, to: Operand) {
-    if (compare_operands(from, this.left)) this.left = to;
     if (compare_operands(from, this.target)) this.target = to;
   }
 }
@@ -1258,23 +1276,6 @@ function are_operand_sets_equal(a: OperandSet, b: OperandSet) {
   return true;
 }
 
-export function compare_operands(a: Operand, b: Operand) {
-  if (a.type !== b.type) return false;
-
-  if (a.type === "variable" && b.type === "variable") return a.name === b.name;
-  if (a.type === "global_variable" && b.type === "global_variable") return a.name === b.name;
-  if (a.type === "literal" && b.type === "literal") {
-    if (a.is_parameter !== b.is_parameter) return false;
-    return a.value === b.value;
-  }
-  if (a.type === "temp_reg" && b.type === "temp_reg") return a.index === b.index;
-  if (a.type === "ssa_variable" && b.type === "ssa_variable") return a.name === b.name && a.index === b.index;
-  if (a.type === "return_register" && b.type === "return_register") return true;
-  if (a.type === "variable_spill" && b.type === "variable_spill") return a.name === b.name;
-
-  return false;
-}
-
 export function constraint_registers(cfg: BasicBlock[], context: FunctionCompilationContext, register_count: number) {
   // Fix CFG so that operations inside it can be performed with only a certain number of registers
   const all_instructions = cfg.flatMap((x) => x.instructions);
@@ -1292,14 +1293,18 @@ export function constraint_registers(cfg: BasicBlock[], context: FunctionCompila
   }
 
   const bad_operands = solution.bad_nodes.map((x) => graph.list[parseInt(x)]);
-  const filtered = bad_operands.filter((x) => x.type === "ssa_variable");
-  if (filtered.length === 0) {
+  // Prioritize rewriting SSA variables over temp registers
+  let to_rewrite: Operand[] = bad_operands.filter((x) => x.type === "ssa_variable");
+  if (to_rewrite.length === 0) to_rewrite = bad_operands.filter((x) => x.type === "temp_reg");
+
+  if (to_rewrite.length === 0) {
     // We know the graph is solved if all the bad bodes are variable spills
     // If there is a bad node that isn't a variable spill, we still haven't solved it
     const bad = Object.keys(solution.color_map).filter(
       (x) =>
         solution.color_map[x] === -1 &&
         graph.list[parseInt(x)].type !== "variable_spill" &&
+        graph.list[parseInt(x)].type !== "register_spill" &&
         graph.list[parseInt(x)].type !== "return_register",
     );
 
@@ -1309,11 +1314,20 @@ export function constraint_registers(cfg: BasicBlock[], context: FunctionCompila
     throw new Error("Invariant: Could not solve graph");
   }
 
-  for (const bad_operand of filtered) {
+  for (const bad_operand of to_rewrite) {
     // console.log("Fixing", bad_operand);
+    const replacement: Operand | null =
+      bad_operand.type === "ssa_variable"
+        ? { type: "variable_spill", name: bad_operand.name }
+        : bad_operand.type === "temp_reg"
+          ? context.get_next_register_spill()
+          : null;
+
     instr: for (const instruction of all_instructions) {
+      if (replacement == null) throw new Error("Invariant: Could not find replacement for operand " + bad_operand.type);
+
       if (instruction instanceof Phi) {
-        instruction.replace_operands(bad_operand, { type: "variable_spill", name: bad_operand.name });
+        instruction.replace_operands(bad_operand, replacement);
         continue instr;
       }
 
@@ -1322,7 +1336,7 @@ export function constraint_registers(cfg: BasicBlock[], context: FunctionCompila
       const inputs = instruction.get_inputs();
       if (inputs.some((x) => compare_operands(x, bad_operand))) {
         const temp = context.get_next_temp_reg();
-        const load_instruction = new MoveInstruction(temp, { type: "variable_spill", name: bad_operand.name });
+        const load_instruction = new MoveInstruction(temp, replacement);
         prepend_instruction(instruction, load_instruction);
         instruction.replace_operands(bad_operand, temp);
       }
@@ -1330,7 +1344,7 @@ export function constraint_registers(cfg: BasicBlock[], context: FunctionCompila
       const outputs = instruction.get_outputs();
       if (outputs.some((x) => compare_operands(x, bad_operand))) {
         const temp = context.get_next_temp_reg();
-        const store_instruction = new MoveInstruction({ type: "variable_spill", name: bad_operand.name }, temp);
+        const store_instruction = new MoveInstruction(replacement, temp);
         instruction.replace_operands(bad_operand, temp);
         append_instruction(instruction, store_instruction);
       }

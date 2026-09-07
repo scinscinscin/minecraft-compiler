@@ -60,7 +60,7 @@ The Virtual Machine allows you to
    - [x] - Writing to pointer dereference `*bar = foo`
  - [x] - Register spillage
  - [x] - Static (global) variable location
-   - [ ] - Support for spilling temporary register values
+   - [x] - Support for spilling temporary register values
  - [ ] - Code optimization
    - [x] - Implement constant folding / propagation
    - [ ] - Remove temporary blocks that coalesce registers in the same way
@@ -68,6 +68,10 @@ The Virtual Machine allows you to
    - [ ] - Remove unused blocks that never get jumped into
  - [ ] - Type checking
    - [ ] - Structures and arrays
+ - [ ] - More control flow
+   - [ ] - For loops
+   - [ ] - Do-while loops
+   - [ ] - Break and continue statements
  - [ ] - Standard Library
    - [ ] - Implement arithmetic using ALU primitives
    - [ ] - Importing code from other files
