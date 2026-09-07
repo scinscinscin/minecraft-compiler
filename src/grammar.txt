@@ -8,14 +8,22 @@
   [FUNCTION] [IDENTIFIER: name] [LPAREN] (<PARAMETER_LIST: parameters>)? [RPAREN] [LBRACE] (<STATEMENT_LIST: statements>)? [RBRACE];
 <PARAMETER_LIST: parameter_list>: [IDENTIFIER: name] ([COMMA] <PARAMETER_LIST: rest>)?;
 
-<STATEMENT_LIST: statement_list>: <STATEMENT | VARIABLE_DEFINITION: stmt> (<STATEMENT_LIST: rest>)?;
-<VARIABLE_DEFINITION: variable_definition>: [VAR] [IDENTIFIER: variable_name] [EQUALS] <EXPRESSION: initializer> [SEMICOLON];
-<STATEMENT: statement>: <IF_STATEMENT | WHILE_LOOP | EXPRESSION_STATEMENT | BLOCK_STATEMENT | RETURN_STATEMENT: stmt>;
+<STATEMENT_LIST: statement_list>: <STATEMENT | VARIABLE_DEFINITION_STATEMENT: stmt> (<STATEMENT_LIST: rest>)?;
+<VARIABLE_DEFINITION: variable_definition>: [VAR] [IDENTIFIER: variable_name] [EQUALS] <EXPRESSION: initializer>;
+<VARIABLE_DEFINITION_STATEMENT: variable_definition_statement>: <VARIABLE_DEFINITION: variable_definition> [SEMICOLON];
+<STATEMENT: statement>: <IF_STATEMENT | WHILE_LOOP | FOR_LOOP | DO_WHILE_LOOP | EXPRESSION_STATEMENT | BLOCK_STATEMENT | RETURN_STATEMENT | BREAK_STATEMENT | CONTINUE_STATEMENT: stmt>;
 <BLOCK_STATEMENT: block_statement>: [LBRACE] (<STATEMENT_LIST: statement_list>)? [RBRACE];
 <IF_STATEMENT: if_statement>: [IF] [LPAREN] <EXPRESSION: condition> [RPAREN] <STATEMENT: body> ([ELSE] <STATEMENT: else_body>)?;
 <WHILE_LOOP: while_loop>: [WHILE] [IDENTIFIER: loop_name] [LPAREN] <EXPRESSION: condition> [RPAREN] <STATEMENT: body>;
+<FOR_LOOP: for_loop>: [FOR] [IDENTIFIER: loop_name] 
+  [LPAREN] (<VARIABLE_DEFINITION: initializer>)? [SEMICOLON] (<EXPRESSION: condition>)? [SEMICOLON] (<EXPRESSION: post_body>)? [RPAREN] 
+  <STATEMENT: body>;
+<DO_WHILE_LOOP: do_while_loop>: [DO] <STATEMENT: body> [WHILE] [IDENTIFIER: loop_name] [LPAREN] <EXPRESSION: condition> [RPAREN] [SEMICOLON];
+
 <EXPRESSION_STATEMENT: expression_statement>: <EXPRESSION: expression> [SEMICOLON];
 <RETURN_STATEMENT: return_statement>: [RETURN] <EXPRESSION: expression> [SEMICOLON];
+<BREAK_STATEMENT: break_statement>: [BREAK] [IDENTIFIER: loop_name] [SEMICOLON];
+<CONTINUE_STATEMENT: continue_statement>: [CONTINUE] [IDENTIFIER: loop_name] [SEMICOLON];
 
 <EXPRESSION: expression>: <ASSIGNMENT_EXPRESSION: expr>;
 <ASSIGNMENT_EXPRESSION: assignment_expr>: ([IDENTIFIER: variable_name] [EQUALS])? <EQUALITY_EXPRESSION: expr>;

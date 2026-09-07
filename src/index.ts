@@ -3,7 +3,7 @@ import path from "path";
 import { lexerGenerator, TokenMetadata, TokenType, toStringifiedTokenType } from "./lexer";
 import { buildProductions, Sparse } from "@scinorandex/sparse";
 import { BaseNode, Program, Reducers } from "./parser";
-import { BasicBlock, constraint_registers, create_register_inference_graph, to_ssa } from "./intermediate";
+import { BasicBlock, to_ssa } from "./intermediate";
 import { compile, RelocatableUnit } from "./compiler";
 import { load } from "./linker";
 import { create_runner } from "./vm";
@@ -11,7 +11,7 @@ import { start_repl } from "./repl";
 import { optimize } from "./optimizer";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/scratch.txt");
+const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/fib.txt");
 const GPR_COUNT = 2;
 
 async function main() {
@@ -40,8 +40,8 @@ async function main() {
     const intermediate_representation = fn.compile(globals.map((x) => x.name.lexeme));
     console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
 
-    const ssa_representation = to_ssa(intermediate_representation);
-    const cfg = optimize(intermediate_representation, ssa_representation);
+    let cfg = to_ssa(intermediate_representation);
+    cfg = optimize(intermediate_representation, cfg);
     const compiled = compile(intermediate_representation, cfg, GPR_COUNT);
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
   });

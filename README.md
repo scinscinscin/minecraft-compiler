@@ -61,17 +61,17 @@ The Virtual Machine allows you to
  - [x] - Register spillage
  - [x] - Static (global) variable location
    - [x] - Support for spilling temporary register values
+ - [x] - More control flow
+   - [x] - For loops
+   - [x] - Do-while loops
+   - [x] - Break and continue statements
  - [ ] - Code optimization
    - [x] - Implement constant folding / propagation
    - [ ] - Remove temporary blocks that coalesce registers in the same way
    - [ ] - Remove unused functions from being linked
    - [ ] - Remove unused blocks that never get jumped into
  - [ ] - Type checking
-   - [ ] - Structures and arrays
- - [ ] - More control flow
-   - [ ] - For loops
-   - [ ] - Do-while loops
-   - [ ] - Break and continue statements
+   - [ ] - Structures / Pointers / Arrays
  - [ ] - Standard Library
    - [ ] - Implement arithmetic using ALU primitives
    - [ ] - Importing code from other files

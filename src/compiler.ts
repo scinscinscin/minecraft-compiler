@@ -536,13 +536,25 @@ export function compile(context: FunctionCompilationContext, blocks: BasicBlock[
     const new_predecessors = [] as { predecessor: BasicBlock; associations: { target: Operand; source: Operand }[] }[];
     const emit = (block: BasicBlock, target: Operand, source: Operand) => {
       if (compare_operands(target, source)) return;
-      const op1_assigned = graph._index_of(target).toString();
-      const op2_assigned = graph._index_of(source).toString();
-      if (register_solution.color_map[op1_assigned] === register_solution.color_map[op2_assigned]) return;
+
+      // register and variable spill containers still get colored by the algorithm
+      // we need to make sure that we're only checking for equality between actual registers
+      if (
+        (target.type === "ssa_variable" || target.type === "temp_reg") &&
+        (source.type === "ssa_variable" || source.type === "temp_reg")
+      ) {
+        const op1_assigned = graph._index_of(target).toString();
+        const op2_assigned = graph._index_of(source).toString();
+        if (register_solution.color_map[op1_assigned] === register_solution.color_map[op2_assigned]) return;
+      }
 
       const existing = new_predecessors.find((x) => x.predecessor === block);
-      if (existing != null) existing.associations.push({ target, source });
-      else new_predecessors.push({ predecessor: block, associations: [{ target, source }] });
+      if (existing != null) {
+        if (
+          !existing.associations.some((x) => compare_operands(x.target, target) && compare_operands(x.source, source))
+        )
+          existing.associations.push({ target, source });
+      } else new_predecessors.push({ predecessor: block, associations: [{ target, source }] });
     };
 
     for (const phi_node of phi_nodes) {

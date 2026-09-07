@@ -12,7 +12,7 @@ export enum TokenType {
   
   NUMBER, IDENTIFIER,
   
-  FUNCTION, VAR, WHILE, IF, ELSE, RETURN,
+  FUNCTION, VAR, WHILE, IF, ELSE, RETURN, FOR, DO, CONTINUE, BREAK,
   EOF,
 }
 
@@ -65,5 +65,9 @@ lexerGenerator.addRule("while", "while", TokenType.WHILE);
 lexerGenerator.addRule("if", "if", TokenType.IF);
 lexerGenerator.addRule("else", "else", TokenType.ELSE);
 lexerGenerator.addRule("return", "return", TokenType.RETURN);
+lexerGenerator.addRule("for", "for", TokenType.FOR);
+lexerGenerator.addRule("do", "do", TokenType.DO);
+lexerGenerator.addRule("continue", "continue", TokenType.CONTINUE);
+lexerGenerator.addRule("break", "break", TokenType.BREAK);
 
 lexerGenerator.addRule("number_literal", "${decimal_number}", TokenType.NUMBER);

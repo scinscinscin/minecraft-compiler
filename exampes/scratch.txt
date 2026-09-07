@@ -1,14 +1,11 @@
 function main () {
-  var a = 4;
-  var b = 0;
+  var ret = 0;
 
-  if(a == 1){
-    b = 1;
-  } else if(b == 2){
-    b = 2;
-  } else {
-    b = 3;
+  for l1 (var i = 0; i < 10; i = i + 1) {
+    ret = ret + 2;
+
+    if (ret > 5) break l1;
   }
 
-  return b;
+  return ret;
 }

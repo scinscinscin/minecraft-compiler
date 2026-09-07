@@ -209,6 +209,62 @@ export class WhileLoop extends StatementNode {
   }
 }
 
+export class ForLoop extends StatementNode {
+  constructor(
+    public readonly loop_name: Token,
+    public readonly initializer: VariableDefinition | null,
+    public readonly condition: ExpressionNode | null,
+    public readonly post_body: ExpressionNode | null,
+    public readonly body: StatementNode,
+  ) {
+    super();
+  }
+
+  emit_ir(context: FunctionCompilationContext) {
+    const body_label = this.loop_name.lexeme + "_body";
+    const finished_label = this.loop_name.lexeme + "_end";
+    const condition_label = this.loop_name.lexeme + "_condition";
+
+    if (this.initializer != null) this.initializer.emit_ir(context);
+
+    context.emit(new GotoLabel(condition_label));
+
+    if (this.condition != null) {
+      context.emit(new ConditionalJump(this.condition.emit_ir(context), body_label));
+      context.emit(new JumpInstruction(finished_label));
+    } else context.emit(new JumpInstruction(body_label));
+
+    context.emit(new GotoLabel(body_label));
+    this.body.emit_ir(context);
+    if (this.post_body != null) this.post_body.emit_ir(context);
+    context.emit(new JumpInstruction(condition_label));
+
+    context.emit(new GotoLabel(finished_label));
+  }
+}
+
+export class DoWhileLoop extends StatementNode {
+  constructor(
+    public readonly loop_name: Token,
+    public readonly body: StatementNode,
+    public readonly condition: ExpressionNode,
+  ) {
+    super();
+  }
+
+  emit_ir(context: FunctionCompilationContext) {
+    const body_label = this.loop_name.lexeme + "_body";
+    const finished_label = this.loop_name.lexeme + "_end";
+    const condition_label = this.loop_name.lexeme + "_condition";
+
+    context.emit(new GotoLabel(body_label));
+    this.body.emit_ir(context);
+    context.emit(new GotoLabel(condition_label));
+    context.emit(new ConditionalJump(this.condition.emit_ir(context), body_label));
+    context.emit(new JumpInstruction(finished_label));
+  }
+}
+
 export class BlockStatement extends StatementNode {
   constructor(public readonly statements: ListNode<StatementNode>) {
     super();
@@ -231,6 +287,26 @@ export class ReturnStatement extends StatementNode {
     context.emit(new MoveInstruction({ type: "return_register" }, destination));
     context.emit(new JumpInstruction(context.function_name + "_end"));
     // context.emit(new ReturnInstruction(destination));
+  }
+}
+
+export class BreakStatement extends StatementNode {
+  constructor(public readonly loop_name: Token) {
+    super();
+  }
+
+  emit_ir(context: FunctionCompilationContext) {
+    context.emit(new JumpInstruction(this.loop_name.lexeme + "_end"));
+  }
+}
+
+export class ContinueStatement extends StatementNode {
+  constructor(public readonly loop_name: Token) {
+    super();
+  }
+
+  emit_ir(context: FunctionCompilationContext) {
+    context.emit(new JumpInstruction(this.loop_name.lexeme + "_condition"));
   }
 }
 
@@ -451,6 +527,7 @@ export const Reducers = {
     bag.rest == null ? new ListNode([bag.stmt]) : bag.rest.add(bag.stmt),
   variable_definition: (bag: { variable_name: Token; initializer: ExpressionNode }) =>
     new VariableDefinition(bag.variable_name, bag.initializer),
+  variable_definition_statement: (bag: { variable_definition: VariableDefinition }) => bag.variable_definition,
   statement: (bag: { stmt: StatementNode }) => bag.stmt,
   block_statement: (bag: { statement_list?: ListNode<StatementNode> }) =>
     new BlockStatement(bag.statement_list ?? new ListNode([])),
@@ -458,8 +535,16 @@ export const Reducers = {
     new IfStatement(bag.condition, bag.body, bag.else_body ?? null),
   while_loop: (bag: { loop_name: Token; condition: ExpressionNode; body: StatementNode }) =>
     new WhileLoop(bag.loop_name, bag.condition, bag.body),
+  // prettier-ignore
+  for_loop: (bag: { loop_name: Token; initializer?: VariableDefinition; condition?: ExpressionNode; post_body?: ExpressionNode; body: StatementNode }) => 
+    new ForLoop(bag.loop_name, bag.initializer ?? null, bag.condition ?? null, bag.post_body ?? null, bag.body),
+  do_while_loop: (bag: { loop_name: Token; body: StatementNode; condition: ExpressionNode }) =>
+    new DoWhileLoop(bag.loop_name, bag.body, bag.condition),
+
   expression_statement: (bag: { expression: ExpressionNode }) => new ExpressionStatement(bag.expression),
   return_statement: (bag: { expression: ExpressionNode }) => new ReturnStatement(bag.expression),
+  break_statement: (bag: { loop_name: Token }) => new BreakStatement(bag.loop_name),
+  continue_statement: (bag: { loop_name: Token }) => new ContinueStatement(bag.loop_name),
 
   expression: (bag: { expr: ExpressionNode }) => bag.expr,
   binary_expr: (bag: { left: ExpressionNode; right?: ExpressionNode; op?: Token }) => {

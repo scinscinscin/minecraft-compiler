@@ -1042,13 +1042,17 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
 
       // add inputs to use if not present in def
       for (const input of inputs) {
-        if (input.type !== "literal" && input.type !== "variable_spill")
+        if (input.type !== "literal" && input.type !== "variable_spill" && input.type !== "register_spill")
           if (!def.some((x) => compare_operands(x, input))) use.push(input);
       }
 
       // add defined to def if not present
       for (const defined_variable of defined)
-        if (defined_variable.type !== "literal" && defined_variable.type !== "variable_spill")
+        if (
+          defined_variable.type !== "literal" &&
+          defined_variable.type !== "variable_spill" &&
+          defined_variable.type !== "register_spill"
+        )
           if (!def.some((x) => compare_operands(x, defined_variable))) def.push(defined_variable);
     }
 
@@ -1204,11 +1208,16 @@ export class RegisterInterferenceGraph {
   }
 
   create_nodes(operands: Operand[]) {
-    for (const operand of operands) this.get_index_of_operand(operand);
+    for (const operand of operands) {
+      if (operand.type === "register_spill" || operand.type === "variable_spill") continue;
+      this.get_index_of_operand(operand);
+    }
   }
 
   create_edge(a: Operand, b: Operand) {
     if (compare_operands(a, b)) return;
+    if (a.type === "register_spill" || b.type === "register_spill") return;
+    if (a.type === "variable_spill" || b.type === "variable_spill") return;
 
     const index_a = this.get_index_of_operand(a);
     const index_b = this.get_index_of_operand(b);
@@ -1230,7 +1239,7 @@ export class RegisterInterferenceGraph {
 
         for (const candidate of candidates) {
           const node = graph.list[candidate];
-          if (node.type === "variable_spill") return candidate.toString();
+          if (node.type === "variable_spill" || node.type === "register_spill") return candidate.toString();
         }
 
         return _candidates[0];
