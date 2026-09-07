@@ -4,7 +4,9 @@ import {
   MoveMachineInstruction,
   PushMachineInstruction,
   RelocatableUnit,
+  StoreMachineInstruction,
 } from "./compiler";
+import { LiteralExpression, VariableDefinition } from "./parser";
 import { Environment } from "./vm";
 
 export interface LinkedInstruction {
@@ -31,6 +33,7 @@ export class NoopMachineInstruction implements LinkedInstruction {
 }
 
 export class LinkerContext {
+  constructor(public readonly globals: string[]) {}
   emitted = [] as LinkedInstruction[];
   emit(instruction: LinkedInstruction) {
     this.emitted.push(instruction);
@@ -74,8 +77,15 @@ export class LinkerContext {
   }
 }
 
-export function load(units: [string, RelocatableUnit][]) {
-  const context = new LinkerContext();
+export function load(units: [string, RelocatableUnit][], globals: VariableDefinition[]) {
+  const context = new LinkerContext(globals.map((x) => x.name.lexeme));
+
+  // include the global variable initialization
+  for (let i = 0; i < globals.length; i++) {
+    const b = globals[i].initializer;
+    const value = b instanceof LiteralExpression ? parseInt(b.number.lexeme) : 0;
+    context.emit(new StoreMachineInstruction({ type: "constant", value: i }, { type: "constant", value }));
+  }
 
   // include the preamble
   context.emit(new MoveMachineInstruction({ type: "base_pointer" }, { type: "constant", value: 255 }));

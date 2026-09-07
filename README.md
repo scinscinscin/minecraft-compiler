@@ -59,15 +59,18 @@ The Virtual Machine allows you to
    - [x] - Reading from pointer dereference `foo = *bar`
    - [x] - Writing to pointer dereference `*bar = foo`
  - [x] - Register spillage
+ - [x] - Static (global) variable location
+   - [ ] - Support for spilling temporary register values
  - [ ] - Code optimization
    - [x] - Implement constant folding / propagation
    - [ ] - Remove temporary blocks that coalesce registers in the same way
    - [ ] - Remove unused functions from being linked
    - [ ] - Remove unused blocks that never get jumped into
- - [ ] - Static variable location
  - [ ] - Type checking
    - [ ] - Structures and arrays
  - [ ] - Standard Library
+   - [ ] - Implement arithmetic using ALU primitives
+   - [ ] - Importing code from other files
  - [ ] - Emitting Minecraft schematic files
 
 ---

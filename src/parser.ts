@@ -20,7 +20,7 @@ type Token = SlexToken<TokenType, TokenMetadata>;
 
 export class BaseNode {}
 export class Program extends BaseNode {
-  constructor(public function_definitions: ListNode<FunctionDefinition>) {
+  constructor(public definitions: GlobalDefinitions) {
     super();
   }
 }
@@ -48,6 +48,7 @@ export class FunctionCompilationContext {
   constructor(
     public readonly function_name: string,
     public readonly parameters: string[],
+    public readonly global_variables: string[],
   ) {}
 
   emitted = [] as IRCode[];
@@ -111,9 +112,9 @@ export class FunctionDefinition extends BaseNode {
   }
 
   // Compiles the statements into a list of IR Code
-  compile() {
+  compile(globals: string[]) {
     const parameters = this.parameters.get_items_reversed().map((x) => x.lexeme);
-    const context = new FunctionCompilationContext(this.name.lexeme, parameters);
+    const context = new FunctionCompilationContext(this.name.lexeme, parameters, globals);
 
     context.emit(new GotoLabel(this.name.lexeme + "_start"));
     for (const statement of this.statements.get_items_reversed()) statement.emit_ir(context);
@@ -313,6 +314,17 @@ export class AssignmentExpression extends ExpressionNode {
     const is_parameter = context.parameters.includes(this.variable_name.lexeme);
     if (is_parameter) throw new Error("Invariant: Cannot assign to a parameter");
 
+    const is_global_variable = context.global_variables.includes(this.variable_name.lexeme);
+    if (is_global_variable) {
+      const temporary = context.get_next_temp_reg();
+      this.expr.emit_ir(context, temporary);
+      context.emit(new StoreInstruction({ type: "global_variable", name: this.variable_name.lexeme }, temporary));
+      if (preferred_destination == null) return temporary;
+
+      context.emit(new MoveInstruction(preferred_destination, temporary));
+      return preferred_destination;
+    }
+
     const destination: Operand = { type: "variable", name: this.variable_name.lexeme };
     this.expr.emit_ir(context, destination);
     if (preferred_destination == null) return destination;
@@ -376,6 +388,16 @@ export class VariableReference extends ExpressionNode {
   }
 
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
+    const global_variable_index = context.global_variables.indexOf(this.name.lexeme);
+    if (global_variable_index !== -1) {
+      const temporary = context.get_next_temp_reg();
+      context.emit(new LoadInstruction(temporary, { type: "global_variable", name: this.name.lexeme }));
+
+      if (preferred_destination == null) return temporary;
+      context.emit(new MoveInstruction(preferred_destination, temporary));
+      return preferred_destination;
+    }
+
     const parameter_index = context.parameters.indexOf(this.name.lexeme);
     const ret: Operand =
       parameter_index !== -1
@@ -389,11 +411,32 @@ export class VariableReference extends ExpressionNode {
   }
 }
 
+class GlobalDefinitions extends BaseNode {
+  functions: ListNode<FunctionDefinition> = new ListNode([]);
+  variables: ListNode<VariableDefinition> = new ListNode([]);
+
+  add_function(function_definition: FunctionDefinition) {
+    this.functions.add(function_definition);
+  }
+
+  add_variable(variable_definition: VariableDefinition) {
+    this.variables.add(variable_definition);
+  }
+}
+
 type Reducer = (bag: any) => BaseNode;
 export const Reducers = {
-  program: (bag: { function_list: ListNode<FunctionDefinition> }) => new Program(bag.function_list),
-  function_definition_list: (bag: { function_definition: FunctionDefinition; rest?: ListNode<FunctionDefinition> }) =>
-    bag.rest == null ? new ListNode([bag.function_definition]) : bag.rest.add(bag.function_definition),
+  program: (bag: { definitions: GlobalDefinitions }) => new Program(bag.definitions),
+
+  global_definition_list: (bag: { definition: FunctionDefinition | VariableDefinition; rest?: GlobalDefinitions }) => {
+    const rest = bag.rest ?? new GlobalDefinitions();
+    if (bag.definition instanceof FunctionDefinition) rest.add_function(bag.definition);
+    else if (bag.definition instanceof VariableDefinition) rest.add_variable(bag.definition);
+    return rest;
+  },
+
+  global_variable_definition: (bag: { variable_name: Token; number: Token }) =>
+    new VariableDefinition(bag.variable_name, new LiteralExpression(bag.number)),
   function_definition: (bag: { name: Token; parameters?: ListNode<Token>; statements?: ListNode<StatementNode> }) =>
     new FunctionDefinition(bag.name, bag.parameters ?? new ListNode([]), bag.statements ?? new ListNode([])),
   parameter_list: (bag: { name: Token; rest?: ListNode<Token> }) =>
@@ -427,7 +470,8 @@ export const Reducers = {
     if (bag.variable_name == null) return bag.expr;
     else return new AssignmentExpression(bag.variable_name, bag.expr);
   },
-  pointer_assignment_expr: (bag: { target: ExpressionNode; expr: ExpressionNode }) => {
+  pointer_access_expression: (bag: { op: Token; target: ExpressionNode; expr?: ExpressionNode }) => {
+    if (bag.expr == null) return new UnaryExpression(bag.target, bag.op);
     return new PointerAssignmentExpression(bag.target, bag.expr);
   },
   grouping_expr: (bag: { expr: ExpressionNode }) => new GroupingExpression(bag.expr),

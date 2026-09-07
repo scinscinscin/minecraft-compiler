@@ -16,10 +16,11 @@ import {
 import { TokenType } from "./lexer";
 import { ConstantCache } from "./optimizer";
 import { FunctionCompilationContext } from "./parser";
-import { color_graph, Heuristics, new_color_graph } from "./utils/coloring";
+import { Heuristics, new_color_graph } from "./utils/coloring";
 
 export type Operand =
   | { type: "variable"; name: string }
+  | { type: "global_variable"; name: string }
   | { type: "temp_reg"; index: number }
   | { type: "literal"; is_parameter: boolean; value: number }
   | { type: "ssa_variable"; name: string; index: number }
@@ -270,6 +271,7 @@ export class LoadInstruction extends IRCode {
 
   replace_operands(from: Operand, to: Operand) {
     if (compare_operands(from, this.source)) this.source = to;
+    if (compare_operands(from, this.target)) this.target = to;
   }
 }
 
@@ -1260,6 +1262,7 @@ export function compare_operands(a: Operand, b: Operand) {
   if (a.type !== b.type) return false;
 
   if (a.type === "variable" && b.type === "variable") return a.name === b.name;
+  if (a.type === "global_variable" && b.type === "global_variable") return a.name === b.name;
   if (a.type === "literal" && b.type === "literal") {
     if (a.is_parameter !== b.is_parameter) return false;
     return a.value === b.value;
@@ -1293,13 +1296,17 @@ export function constraint_registers(cfg: BasicBlock[], context: FunctionCompila
   if (filtered.length === 0) {
     // We know the graph is solved if all the bad bodes are variable spills
     // If there is a bad node that isn't a variable spill, we still haven't solved it
-    const actually_solved =
-      Object.keys(solution.color_map).filter(
-        (x) => solution.color_map[x] === -1 && graph.list[parseInt(x)].type !== "variable_spill",
-      ).length === 0;
+    const bad = Object.keys(solution.color_map).filter(
+      (x) =>
+        solution.color_map[x] === -1 &&
+        graph.list[parseInt(x)].type !== "variable_spill" &&
+        graph.list[parseInt(x)].type !== "return_register",
+    );
 
-    if (actually_solved) return { graph, solution };
-    else throw new Error("Invariant: Could not solve graph");
+    if (bad.length === 0) return { graph, solution };
+
+    console.log(bad.map((x) => graph.list[parseInt(x)]));
+    throw new Error("Invariant: Could not solve graph");
   }
 
   for (const bad_operand of filtered) {

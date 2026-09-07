@@ -11,7 +11,7 @@ import { start_repl } from "./repl";
 import { optimize } from "./optimizer";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/fib.txt");
+const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/scratch.txt");
 const GPR_COUNT = 2;
 
 async function main() {
@@ -33,10 +33,13 @@ async function main() {
   const rootNode = parser.parse().result as Program | null;
   if (rootNode == null) throw new Error("Invariant: Root node should not be null. ");
 
-  const functions = rootNode.function_definitions.get_items_reversed();
+  console.log(rootNode.definitions);
+  const globals = rootNode.definitions.variables.get_items_reversed();
+  const functions = rootNode.definitions.functions.get_items_reversed();
+
   const units = functions.map((fn) => {
-    const intermediate_representation = fn.compile();
-    // console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
+    const intermediate_representation = fn.compile(globals.map((x) => x.name.lexeme));
+    console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
 
     const ssa_representation = to_ssa(intermediate_representation);
     const cfg = optimize(intermediate_representation, ssa_representation);
@@ -44,7 +47,7 @@ async function main() {
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
   });
 
-  const linked = load(units);
+  const linked = load(units, globals);
   console.log("Printing linked code: ================");
   for (let i = 0; i < linked.length; i++) {
     const instruction = linked[i];

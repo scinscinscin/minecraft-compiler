@@ -1,6 +1,9 @@
 <S>: <PROGRAM>;
-<PROGRAM: program>: (<FUNCTION_DEFINITION_LIST: function_list>)? [EOF];
-<FUNCTION_DEFINITION_LIST: function_definition_list>: <FUNCTION_DEFINITION: function_definition> (<FUNCTION_DEFINITION_LIST: rest>)?;
+<PROGRAM: program>: (<GLOBAL_DEFINITION_LIST: definitions>)? [EOF];
+<GLOBAL_DEFINITION_LIST: global_definition_list>: 
+  <FUNCTION_DEFINITION | GLOBAL_VARIABLE_DEFINITION: definition> (<GLOBAL_DEFINITION_LIST: rest>)?;
+
+<GLOBAL_VARIABLE_DEFINITION: global_variable_definition>: [VAR] [IDENTIFIER: variable_name] [EQUALS] [NUMBER: number] [SEMICOLON];
 <FUNCTION_DEFINITION: function_definition>: 
   [FUNCTION] [IDENTIFIER: name] [LPAREN] (<PARAMETER_LIST: parameters>)? [RPAREN] [LBRACE] (<STATEMENT_LIST: statements>)? [RBRACE];
 <PARAMETER_LIST: parameter_list>: [IDENTIFIER: name] ([COMMA] <PARAMETER_LIST: rest>)?;
@@ -14,9 +17,8 @@
 <EXPRESSION_STATEMENT: expression_statement>: <EXPRESSION: expression> [SEMICOLON];
 <RETURN_STATEMENT: return_statement>: [RETURN] <EXPRESSION: expression> [SEMICOLON];
 
-<EXPRESSION: expression>: <ASSIGNMENT_EXPRESSION | POINTER_ASSIGNMENT_EXPRESSION: expr>;
+<EXPRESSION: expression>: <ASSIGNMENT_EXPRESSION: expr>;
 <ASSIGNMENT_EXPRESSION: assignment_expr>: ([IDENTIFIER: variable_name] [EQUALS])? <EQUALITY_EXPRESSION: expr>;
-<POINTER_ASSIGNMENT_EXPRESSION: pointer_assignment_expr>: [STAR] <EQUALITY_EXPRESSION: target> [EQUALS] <EQUALITY_EXPRESSION: expr>;
 <EQUALITY_EXPRESSION: binary_expr>: <COMPARISON_EXPRESSION: left> ([DOUBLE_EQUALS | BANG_EQUALS: op] <COMPARISON_EXPRESSION: right>)?;
 <COMPARISON_EXPRESSION: binary_expr>: 
   <BITWISE_OR_EXPRESSION: left> ([LESS_THAN | GREATER_THAN | LESS_THAN_EQUALS | GREATER_THAN_EQUALS: op] <BITWISE_OR_EXPRESSION: right>)?;
@@ -25,8 +27,8 @@
 <BITWISE_XOR_EXPRESSION: binary_expr>: <TERM_EXPRESSION: left> ([CARAT | TILDE_CARAT: op] <BITWISE_XOR_EXPRESSION: right>)?;
 <TERM_EXPRESSION: binary_expr>: <SHIFT_EXPRESSION: left> ([PLUS | MINUS: op] <TERM_EXPRESSION: right>)?;
 <SHIFT_EXPRESSION: unary_expr>: ([LEFTSHIFT | RIGHTSHIFT: op])? <BITWISE_NOT_EXPRESSION: target>;
-<BITWISE_NOT_EXPRESSION: unary_expr>: ([TILDE: op])? <POINTER_DEREFERENCE_EXPRESSION: target>;
-<POINTER_DEREFERENCE_EXPRESSION: unary_expr>: ([STAR: op])? <ENDPOINT: target>;
+<BITWISE_NOT_EXPRESSION: unary_expr>: ([TILDE: op])? <POINTER_ACCESS_EXPRESSION | ENDPOINT: target>;
+<POINTER_ACCESS_EXPRESSION: pointer_access_expression>: [STAR: op] <ENDPOINT: target> ([EQUALS] <EXPRESSION: expr>)?;
 
 <ENDPOINT: grouping_expr>: [LPAREN] <EXPRESSION: expr> [RPAREN];
 <ENDPOINT: variable_reference>: [IDENTIFIER: variable_name];

@@ -28,7 +28,8 @@ export type MachineOperand =
   | { type: "constant"; value: number }
   | { type: "return_register" }
   | { type: "parameter"; index: number }
-  | { type: "variable"; index: number };
+  | { type: "variable"; index: number }
+  | { type: "global_variable"; name: string };
 
 function stringify_machine_operand(operand: MachineOperand) {
   if (operand.type === "gpr") return `gpr${operand.index}`;
@@ -42,6 +43,8 @@ function stringify_machine_operand(operand: MachineOperand) {
 
   // Add one for variable because 0 is the base pointer and -1 is the start of variable spill space
   if (operand.type === "variable") return `stack[bp - ${operand.index + 1}]`;
+
+  if (operand.type === "global_variable") return `global[${operand.name}]`;
 }
 
 function compare_machine_operands(a: MachineOperand, b: MachineOperand) {
@@ -55,6 +58,7 @@ function compare_machine_operands(a: MachineOperand, b: MachineOperand) {
   if (a.type === "return_register" && b.type === "return_register") return true;
   if (a.type === "parameter" && b.type === "parameter") return a.index === b.index;
   if (a.type === "variable" && b.type === "variable") return a.index === b.index;
+  if (a.type === "global_variable" && b.type === "global_variable") return a.name === b.name;
 
   return false;
 }
@@ -177,7 +181,10 @@ export class LoadMachineInstruction extends MachineInstruction implements Linked
   }
 
   to_machine_code(context: LinkerContext) {
-    context.emit(this);
+    if (this.source.type !== "global_variable") return context.emit(this);
+
+    const location = context.globals.indexOf(this.source.name);
+    context.emit(new LoadMachineInstruction(this.target, { type: "constant", value: location }));
   }
 
   execute(environment: Environment) {
@@ -201,7 +208,10 @@ export class StoreMachineInstruction extends MachineInstruction implements Linke
   }
 
   to_machine_code(context: LinkerContext) {
-    context.emit(this);
+    if (this.target.type !== "global_variable") return context.emit(this);
+
+    const location = context.globals.indexOf(this.target.name);
+    context.emit(new StoreMachineInstruction({ type: "constant", value: location }, this.source));
   }
 
   execute(environment: Environment) {
@@ -370,6 +380,10 @@ export class RelocatableUnit {
     if (operand.type === "variable_spill") {
       const variable_index = this.compilation_context.variables.indexOf(operand.name);
       return { type: "variable", index: variable_index };
+    }
+
+    if (operand.type === "global_variable") {
+      return { type: "global_variable", name: operand.name };
     }
 
     throw new Error("Unknown operand type: ");
