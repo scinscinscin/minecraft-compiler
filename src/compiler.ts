@@ -28,8 +28,7 @@ export type MachineOperand =
   | { type: "base_pointer" }
   | { type: "constant"; value: number }
   | { type: "return_register" }
-  | { type: "parameter"; index: number }
-  | { type: "variable"; index: number }
+  | { type: "stack_relative"; index: number }
   | { type: "global_variable"; name: string };
 
 function stringify_machine_operand(operand: MachineOperand) {
@@ -39,13 +38,10 @@ function stringify_machine_operand(operand: MachineOperand) {
   if (operand.type === "base_pointer") return "bp";
   if (operand.type === "constant") return `${operand.value}`;
   if (operand.type === "return_register") return "return_register";
-  // Add two for parameter because 0 is base pointer and 1 is for the return address
-  if (operand.type === "parameter") return `stack[bp + ${operand.index + 2}]`;
-
-  // Add one for variable because 0 is the base pointer and -1 is the start of variable spill space
-  if (operand.type === "variable") return `stack[bp - ${operand.index + 1}]`;
-
+  if (operand.type === "stack_relative") return `stack[bp ${operand.index < 0 ? "-" : "+"} ${Math.abs(operand.index)}]`;
   if (operand.type === "global_variable") return `global[${operand.name}]`;
+
+  throw new Error("Invariant: Operand should not be null. " + operand);
 }
 
 function compare_machine_operands(a: MachineOperand, b: MachineOperand) {
@@ -57,8 +53,7 @@ function compare_machine_operands(a: MachineOperand, b: MachineOperand) {
   if (a.type === "base_pointer" && b.type === "base_pointer") return true;
   if (a.type === "constant" && b.type === "constant") return a.value === b.value;
   if (a.type === "return_register" && b.type === "return_register") return true;
-  if (a.type === "parameter" && b.type === "parameter") return a.index === b.index;
-  if (a.type === "variable" && b.type === "variable") return a.index === b.index;
+  if (a.type === "stack_relative" && b.type === "stack_relative") return a.index === b.index;
   if (a.type === "global_variable" && b.type === "global_variable") return a.name === b.name;
 
   return false;
@@ -371,7 +366,7 @@ export class RelocatableUnit {
     if (operand.type === "return_register") return { type: "return_register" };
     if (operand.type === "variable") throw new Error("Invariant: Cannot convert variable to machine operand");
     if (operand.type === "literal") {
-      if (operand.is_parameter) return { type: "parameter", index: operand.value };
+      if (operand.is_parameter) return { type: "stack_relative", index: operand.value + 2 };
       else return { type: "constant", value: operand.value };
     }
 
@@ -382,18 +377,18 @@ export class RelocatableUnit {
 
     if (operand.type === "variable_spill") {
       const variable_index = this.compilation_context.variables.indexOf(operand.name);
-      return { type: "variable", index: variable_index };
-    }
-
-    if (operand.type === "global_variable") {
-      return { type: "global_variable", name: operand.name };
+      return { type: "stack_relative", index: -1 * (variable_index + 1) };
     }
 
     if (operand.type === "register_spill") {
       const variable_count = this.compilation_context.variables.length;
       const register_spill_container =
         this.register_spill_solution.color_map[this.register_spill_graph._index_of(operand)];
-      return { type: "variable", index: variable_count + register_spill_container };
+      return { type: "stack_relative", index: -1 * (variable_count + register_spill_container + 1) };
+    }
+
+    if (operand.type === "global_variable") {
+      return { type: "global_variable", name: operand.name };
     }
 
     throw new Error("Unknown operand type: ");
@@ -416,7 +411,7 @@ export function create_temporary_block(graph_edges: { target: MachineOperand; so
   // handle any case where it's a register -> variable spill location
   for (const edge of graph_edges) {
     // check if target is variable spill
-    if (edge.target.type === "variable") {
+    if (edge.target.type === "stack_relative") {
       commands.push(new MoveMachineInstruction(edge.target, edge.source));
     } else queue.push(edge);
   }

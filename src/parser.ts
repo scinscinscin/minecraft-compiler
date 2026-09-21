@@ -480,13 +480,17 @@ export class VariableReference extends ExpressionNode {
     }
 
     const parameter_index = context.parameters.indexOf(this.name.lexeme);
-    const ret: Operand =
-      parameter_index !== -1
-        ? { type: "literal", is_parameter: true, value: context.parameters.indexOf(this.name.lexeme) }
-        : { type: "variable", name: this.name.lexeme };
+    if (parameter_index !== -1) {
+      const temporary = context.get_next_temp_reg();
+      context.emit(new MoveInstruction(temporary, { type: "literal", is_parameter: true, value: parameter_index }));
 
+      if (preferred_destination == null) return temporary;
+      context.emit(new MoveInstruction(preferred_destination, temporary));
+      return preferred_destination;
+    }
+
+    const ret: Operand = { type: "variable", name: this.name.lexeme };
     if (preferred_destination == null) return ret;
-
     context.emit(new MoveInstruction(preferred_destination, ret));
     return preferred_destination;
   }

@@ -24,14 +24,6 @@ export class HaltMachineInstruction implements LinkedInstruction {
   }
 }
 
-export class NoopMachineInstruction implements LinkedInstruction {
-  to_stringified() {
-    return "noop";
-  }
-
-  execute() {}
-}
-
 export class LinkerContext {
   constructor(public readonly globals: string[]) {}
   emitted = [] as LinkedInstruction[];

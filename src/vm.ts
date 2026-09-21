@@ -27,20 +27,13 @@ export class Environment {
 
   get_machine_operand(operand: MachineOperand): number {
     if (operand.type === "gpr") return this.gpr[operand.index];
-    if (operand.type === "instruction_pointer") return this.instruction_pointer;
-    if (operand.type === "stack_pointer") return this.stack_pointer;
-    if (operand.type === "base_pointer") return this.base_pointer;
-    if (operand.type === "return_register") return this.return_register;
-    if (operand.type === "constant") return operand.value;
-
-    // Add two here because operand.index is the index of the parameter in the function
-    // +2 because the first two parameters are the base pointer and return address
-    if (operand.type === "parameter") return this.memory[this.base_pointer + operand.index + 2];
-
-    // Add one here because operand.index is the index of the variable inside the function
-    if (operand.type === "variable") return this.memory[this.base_pointer - (operand.index + 1)];
-
-    throw new Error("Invariant: Operand should not be null. " + operand);
+    else if (operand.type === "instruction_pointer") return this.instruction_pointer;
+    else if (operand.type === "stack_pointer") return this.stack_pointer;
+    else if (operand.type === "base_pointer") return this.base_pointer;
+    else if (operand.type === "return_register") return this.return_register;
+    else if (operand.type === "constant") return operand.value;
+    else if (operand.type === "stack_relative") return this.memory[this.base_pointer + operand.index];
+    else throw new Error("Invariant: Operand should not be null. " + operand);
   }
 
   set_machine_operand(operand: MachineOperand, value: number) {
@@ -50,8 +43,7 @@ export class Environment {
     else if (operand.type === "base_pointer") this.base_pointer = value;
     else if (operand.type === "return_register") this.return_register = value;
     else if (operand.type === "constant") return;
-    else if (operand.type === "parameter") this.memory[this.base_pointer + operand.index + 2] = value;
-    else if (operand.type === "variable") this.memory[this.base_pointer - (operand.index + 1)] = value;
+    else if (operand.type === "stack_relative") this.memory[this.base_pointer + operand.index] = value;
     else throw new Error("Invariant: Operand should not be null. " + operand);
   }
 
