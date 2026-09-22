@@ -1,11 +1,12 @@
 {
   "compilerOptions": {
     "target": "es2017",
+    "paths": { "@/*": ["./src/*"] },
+
     "module": "nodenext",
     "lib": ["dom", "es6", "es2023", "esnext.asynciterable"],
     "skipLibCheck": true,
     "sourceMap": true,
-    "rootDir": "./src",
     "outDir": "./dist",
     "moduleResolution": "nodenext",
     "removeComments": true,
@@ -27,5 +28,5 @@
     "types": ["node"]
   },
   "exclude": ["node_modules"],
-  "include": ["./src/**/*.ts"]
+  "include": ["./src/**/*.ts", "./tests/**/*.ts"]
 }
