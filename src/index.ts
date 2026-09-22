@@ -11,7 +11,7 @@ import { start_repl } from "./repl";
 import { optimize } from "./optimizer";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./exampes/fib.txt");
+const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
 const GPR_COUNT = 2;
 
 async function main() {
@@ -53,11 +53,15 @@ async function main() {
     console.log(`[${i.toString().padStart(2, "0")}]: ${instruction.to_stringified()}`);
   }
 
-  start_repl(create_runner(linked));
+  // start_repl(create_runner(linked));
 }
 
 export function pretty_print(x: BasicBlock[]) {
-  for (const b of x) console.log(b.instructions.map((i) => i.to_stringified()));
+  console.log("================================");
+  for (const b of x) {
+    console.log(b.labels);
+    console.log(b.instructions.map((i) => i.to_stringified()));
+  }
 }
 
 main();

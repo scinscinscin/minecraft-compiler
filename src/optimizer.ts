@@ -1,10 +1,14 @@
+import { pretty_print } from ".";
 import {
   BasicBlock,
   compare_operands,
+  ConditionalJump,
   FunctionCallInstruction,
   IRCode,
+  JumpInstruction,
   liveliness_analysis,
   Operand,
+  Phi,
 } from "./intermediate";
 import { FunctionCompilationContext } from "./parser";
 
@@ -16,6 +20,7 @@ export function optimize(fn_compile_context: FunctionCompilationContext, cfg: Ba
     changed = changed || constant_propagation(cfg, constant_cache);
     changed = changed || dead_code_elimination(fn_compile_context, cfg);
     changed = changed || statement_replacement(fn_compile_context, cfg);
+    changed = changed || dead_jump_elimination(fn_compile_context, cfg);
     if (changed == false) break;
   }
 
@@ -116,4 +121,98 @@ export function statement_replacement(fn_compile_context: FunctionCompilationCon
   }
 
   return changed;
+}
+
+export function dead_jump_elimination(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
+  let changed = false;
+
+  for (const block of cfg) {
+    for (const instruction of block.instructions) {
+      if (instruction instanceof ConditionalJump) {
+        const condition = instruction.expression;
+        if (condition.type === "literal" && condition.is_parameter == false) {
+          changed = true;
+
+          // determine which jump to take
+          // if true replace with an absolute jump to the label and remove successor block
+          if (condition.value !== 0) {
+            // replace instruction with an absolute jump to the label
+            const jump = new JumpInstruction(instruction.label);
+            block.replace_instruction(instruction, jump);
+            fn_compile_context.replace_instruction(instruction, jump);
+
+            // Keep true block
+            const true_block = cfg.find((x) => x.labels.includes(instruction.label))!;
+            block.successors = block.successors.filter((x) => x === true_block);
+
+            // remove false block
+            const false_label = instruction.label.replaceAll("_true", "_false");
+            const successor_to_remove = cfg.find((x) => x.labels.includes(false_label));
+            if (successor_to_remove == null) throw new Error("Invariant: Could not find successor block");
+
+            cfg.splice(cfg.indexOf(successor_to_remove), 1);
+            for (const unused_instruction of successor_to_remove.instructions)
+              fn_compile_context.remove_instruction(unused_instruction);
+
+            for (const block of cfg)
+              for (const instr of block.instructions)
+                if (instr instanceof Phi) instr.remove_source(successor_to_remove);
+          } else {
+            // delete true block
+            // if false block exists, jump to it unconditionally
+            // else jump to the finished label unconditionally
+
+            // delete the current instruction
+            block.remove_instruction(instruction);
+            fn_compile_context.remove_instruction(instruction);
+
+            // remove true block
+            const true_block = cfg.find((x) => x.labels.includes(instruction.label))!;
+            block.successors = block.successors.filter((x) => x !== true_block);
+
+            cfg.splice(cfg.indexOf(true_block), 1);
+            for (const unused_instruction of true_block.instructions)
+              fn_compile_context.remove_instruction(unused_instruction);
+
+            for (const block of cfg)
+              for (const instr of block.instructions) if (instr instanceof Phi) instr.remove_source(true_block);
+          }
+        }
+      }
+    }
+  }
+
+  enforce_graph_consistency(fn_compile_context, cfg);
+  return changed;
+}
+
+// removes block that don't have a predecessor
+export function enforce_graph_consistency(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]) {
+  let changed_within_iteration = true;
+  while (changed_within_iteration == true) {
+    changed_within_iteration = false;
+
+    for (let i = 1; i < cfg.length; i++) {
+      const block = cfg[i];
+
+      // make sure that there is atleast one block that points to this block
+      let is_reached = false;
+      reaching: for (const other_block of cfg) {
+        if (other_block.successors.includes(block)) {
+          is_reached = true;
+          break reaching;
+        }
+      }
+
+      if (is_reached == false) {
+        // remove this block and all instructions inside of it
+        changed_within_iteration = true;
+
+        cfg.splice(i, 1);
+        for (const instruction of block.instructions) fn_compile_context.remove_instruction(instruction);
+        for (const block of cfg)
+          for (const instr of block.instructions) if (instr instanceof Phi) instr.remove_source(block);
+      }
+    }
+  }
 }

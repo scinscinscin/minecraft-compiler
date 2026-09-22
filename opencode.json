@@ -10,7 +10,7 @@
         "your-model-id": {
           "id": "Qwen3.6-35B-A3B-MTP-GGUF:Q6_K",
           "name": "Qwen3.6-35B-A3B-MTP-GGUF:Q6_K",
-          "limit": { "context": 131072, "output": 8192 }
+          "limit": { "context": 262144, "output": 8192 }
         }
       }
     }

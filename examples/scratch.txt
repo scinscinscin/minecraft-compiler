@@ -1,0 +1,14 @@
+function main () {
+  var a = 0;
+  var b = 0;
+  var c = a + b;
+
+  if(c){
+    c = 128;
+  }else{
+    c = 256;
+    return 1;
+  }
+
+  return c;
+}

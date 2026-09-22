@@ -69,7 +69,7 @@ The Virtual Machine allows you to
    - [x] - Implement constant folding / propagation
    - [ ] - Remove temporary blocks that coalesce registers in the same way
    - [ ] - Remove unused functions from being linked
-   - [ ] - Remove unused blocks that never get jumped into
+   - [x] - Remove unused blocks that never get jumped into
  - [ ] - Type checking
    - [ ] - Structures / Pointers / Arrays
  - [ ] - Standard Library

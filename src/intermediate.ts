@@ -116,6 +116,13 @@ export class Phi extends IRCode {
     this.from.push(block);
   }
 
+  remove_source(block: BasicBlock) {
+    const idx = this.from.indexOf(block);
+    if (idx === -1) return;
+    this.from.splice(idx, 1);
+    this.sources.splice(idx, 1);
+  }
+
   check_if_redefines_variable(variable_name: string): boolean {
     if (this.target.type !== "variable") return false;
     return this.target.name === variable_name;
@@ -473,7 +480,7 @@ export class ConditionalJump extends IRCode {
   }
 
   to_ssa(variable_name: string, context: VariableStackManager) {
-    this.expression = handle_operand_write(this.expression, variable_name, context);
+    this.expression = handle_operand_read(this.expression, variable_name, context);
   }
 
   get_inputs() {
