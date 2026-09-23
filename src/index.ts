@@ -9,6 +9,7 @@ import { load } from "./linker";
 import { create_runner } from "./vm";
 import { start_repl } from "./repl";
 import { optimize } from "./optimizer";
+import { TypeChecker } from "./typechecker";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
 const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
@@ -55,6 +56,13 @@ async function main() {
 
   const rootNode = parser.parse().result as Program | null;
   if (rootNode == null) throw new Error("Invariant: Root node should not be null. ");
+
+  const type_checker = new TypeChecker();
+  type_checker.check_all(rootNode);
+  if (type_checker.has_errors()) {
+    type_checker.print_errors();
+    process.exit(1);
+  }
 
   const globals = rootNode.definitions.variables.get_items_reversed();
   const functions = rootNode.definitions.functions.get_items_reversed();

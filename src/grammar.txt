@@ -3,13 +3,14 @@
 <GLOBAL_DEFINITION_LIST: global_definition_list>: 
   <FUNCTION_DEFINITION | GLOBAL_VARIABLE_DEFINITION: definition> (<GLOBAL_DEFINITION_LIST: rest>)?;
 
-<GLOBAL_VARIABLE_DEFINITION: global_variable_definition>: [VAR] [IDENTIFIER: variable_name] [EQUALS] [NUMBER: number] [SEMICOLON];
+<GLOBAL_VARIABLE_DEFINITION: global_variable_definition>: [VAR] [IDENTIFIER: variable_name] [COLON] <TYPE: type> [EQUALS] [NUMBER: number] [SEMICOLON];
 <FUNCTION_DEFINITION: function_definition>: 
-  [FUNCTION] [IDENTIFIER: name] [LPAREN] (<PARAMETER_LIST: parameters>)? [RPAREN] [LBRACE] (<STATEMENT_LIST: statements>)? [RBRACE];
-<PARAMETER_LIST: parameter_list>: [IDENTIFIER: name] ([COMMA] <PARAMETER_LIST: rest>)?;
+  [FUNCTION] [IDENTIFIER: name] [LPAREN] (<PARAMETER_LIST: parameters>)? [RPAREN] [COLON] <TYPE: return_type> [LBRACE] (<STATEMENT_LIST: statements>)? [RBRACE];
+<PARAMETER_LIST: parameter_list>: [IDENTIFIER: name] [COLON] <TYPE: type> ([COMMA] <PARAMETER_LIST: rest>)?;
+<TYPE: type>: [IDENTIFIER: type_name];
 
 <STATEMENT_LIST: statement_list>: <STATEMENT | VARIABLE_DEFINITION_STATEMENT: stmt> (<STATEMENT_LIST: rest>)?;
-<VARIABLE_DEFINITION: variable_definition>: [VAR] [IDENTIFIER: variable_name] [EQUALS] <EXPRESSION: initializer>;
+<VARIABLE_DEFINITION: variable_definition>: [VAR] [IDENTIFIER: variable_name] [COLON] <TYPE: type> [EQUALS] <EXPRESSION: initializer>;
 <VARIABLE_DEFINITION_STATEMENT: variable_definition_statement>: <VARIABLE_DEFINITION: variable_definition> [SEMICOLON];
 <STATEMENT: statement>: <IF_STATEMENT | WHILE_LOOP | FOR_LOOP | DO_WHILE_LOOP | EXPRESSION_STATEMENT | BLOCK_STATEMENT | RETURN_STATEMENT | BREAK_STATEMENT | CONTINUE_STATEMENT: stmt>;
 <BLOCK_STATEMENT: block_statement>: [LBRACE] (<STATEMENT_LIST: statement_list>)? [RBRACE];

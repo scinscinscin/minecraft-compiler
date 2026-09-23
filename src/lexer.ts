@@ -8,7 +8,7 @@ export enum TokenType {
   EQUALS, 
   LPAREN, RPAREN, LBRACE, RBRACE,
 
-  SEMICOLON, COMMA,
+  SEMICOLON, COMMA, COLON,
   
   NUMBER, IDENTIFIER,
   
@@ -52,6 +52,7 @@ lexerGenerator.addRule("greater_than_equals", "$>$=", TokenType.GREATER_THAN_EQU
 
 lexerGenerator.addRule("semicolon", "$;", TokenType.SEMICOLON);
 lexerGenerator.addRule("comma", "$,", TokenType.COMMA);
+lexerGenerator.addRule("colon", "$:", TokenType.COLON);
 
 lexerGenerator.addRule("lparen", "$(", TokenType.LPAREN);
 lexerGenerator.addRule("rparen", "$)", TokenType.RPAREN);

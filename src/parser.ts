@@ -1,5 +1,8 @@
 import { Token as SlexToken } from "@scinorandex/slex";
 import { TokenMetadata, TokenType } from "./lexer";
+import { Type } from "./type";
+import { IntType } from "./type";
+import { TypeChecker, Diagnostic } from "./typechecker";
 import {
   BinaryInstruction,
   ConditionalJump,
@@ -18,10 +21,27 @@ import {
 
 type Token = SlexToken<TokenType, TokenMetadata>;
 
+function resolve_type(token: Token): Type {
+  if (token.lexeme === "int") return IntType.instance;
+  throw new Error(`Unknown type: ${token.lexeme}`);
+}
+
+function make_underline(column: number, length: number): string {
+  return " ".repeat(column - 1) + "^".repeat(length);
+}
+
+function get_token_position(token: Token): { line: number; column: number } {
+  return { line: token.line ?? 0, column: token.column ?? 0 };
+}
+
 export class BaseNode {}
 export class Program extends BaseNode {
   constructor(public definitions: GlobalDefinitions) {
     super();
+  }
+
+  check_types(checker: TypeChecker): void {
+    this.definitions.check_types(checker);
   }
 }
 
@@ -44,10 +64,23 @@ export class ListNode<T> extends BaseNode {
   }
 }
 
+export class ParameterNode extends BaseNode {
+  constructor(
+    public readonly name: Token,
+    public readonly type: Token,
+  ) {
+    super();
+  }
+
+  check_types(): void {
+    // Parameter types are checked at the call site
+  }
+}
+
 export class FunctionCompilationContext {
   constructor(
     public readonly function_name: string,
-    public readonly parameters: string[],
+    public readonly parameters: ParameterNode[],
     public readonly global_variables: string[],
   ) {}
 
@@ -110,7 +143,8 @@ export class FunctionCompilationContext {
 export class FunctionDefinition extends BaseNode {
   constructor(
     public readonly name: Token,
-    public readonly parameters: ListNode<Token>,
+    public readonly parameters: ListNode<ParameterNode>,
+    public readonly return_type: Token,
     public readonly statements: ListNode<StatementNode>,
   ) {
     super();
@@ -118,7 +152,7 @@ export class FunctionDefinition extends BaseNode {
 
   // Compiles the statements into a list of IR Code
   compile(globals: string[]) {
-    const parameters = this.parameters.get_items_reversed().map((x) => x.lexeme);
+    const parameters = this.parameters.get_items_reversed();
     const context = new FunctionCompilationContext(this.name.lexeme, parameters, globals);
 
     context.emit(new GotoLabel(this.name.lexeme + "_start"));
@@ -128,15 +162,26 @@ export class FunctionDefinition extends BaseNode {
 
     return context;
   }
+
+  check_types(checker: TypeChecker, global_types: Map<string, Type>): void {
+    const symbol_table = new SymbolTable(global_types);
+    for (const param of this.parameters.get_items()) symbol_table.define_parameter(param.name.lexeme, param.type);
+
+    const expected_return_type = resolve_type(this.return_type);
+    for (const stmt of this.statements.get_items_reversed())
+      stmt.check_types(checker, symbol_table, `function '${this.name.lexeme}'`, expected_return_type);
+  }
 }
 
 export abstract class StatementNode extends BaseNode {
   abstract emit_ir(context: FunctionCompilationContext): void;
+  abstract check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type: Type): void;
 }
 
 export class VariableDefinition extends StatementNode {
   constructor(
     public readonly name: Token,
+    public readonly type: Token,
     public readonly initializer: ExpressionNode,
   ) {
     super();
@@ -147,6 +192,42 @@ export class VariableDefinition extends StatementNode {
 
     const destination: Operand = { type: "variable", name: this.name.lexeme };
     this.initializer.emit_ir(context, destination);
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    const expected_type = resolve_type(this.type);
+    if (expected_type == null) {
+      const pos = get_token_position(this.type);
+      checker.add_diagnostic(
+        new Diagnostic(
+          pos.line,
+          pos.column,
+          `unknown type '${this.type.lexeme}'`,
+          "",
+          make_underline(pos.column, this.type.lexeme.length),
+          `${context}, variable '${this.name.lexeme}'`,
+        ),
+      );
+      return;
+    }
+
+    const actual_type = this.initializer.get_type(symbol_table);
+    if (!actual_type.equals(expected_type)) {
+      const pos = get_token_position(this.type);
+      checker.add_diagnostic(
+        new Diagnostic(
+          pos.line,
+          pos.column,
+          `type mismatch: expected '${expected_type.name}', got '${actual_type.name}'`,
+          "",
+          make_underline(pos.column, this.type.lexeme.length),
+          `${context}, variable '${this.name.lexeme}'`,
+        ),
+      );
+    }
+
+    this.initializer.check_types(checker, symbol_table, context);
+    symbol_table.define_variable(this.name.lexeme, this.type);
   }
 }
 
@@ -181,6 +262,14 @@ export class IfStatement extends StatementNode {
 
     context.emit(new GotoLabel(finished_label));
   }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type: Type): void {
+    this.condition.check_types(checker, symbol_table, context);
+    this.body.check_types(checker, symbol_table, context, return_type);
+    if (this.else_body != null) {
+      this.else_body.check_types(checker, symbol_table, context, return_type);
+    }
+  }
 }
 
 export class WhileLoop extends StatementNode {
@@ -206,6 +295,11 @@ export class WhileLoop extends StatementNode {
     context.emit(new JumpInstruction(condition_label));
 
     context.emit(new GotoLabel(finished_label));
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type: Type): void {
+    this.condition.check_types(checker, symbol_table, context);
+    this.body.check_types(checker, symbol_table, context, return_type);
   }
 }
 
@@ -241,6 +335,13 @@ export class ForLoop extends StatementNode {
 
     context.emit(new GotoLabel(finished_label));
   }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type: Type): void {
+    if (this.initializer != null) this.initializer.check_types(checker, symbol_table, context);
+    if (this.condition != null) this.condition.check_types(checker, symbol_table, context);
+    if (this.post_body != null) this.post_body.check_types(checker, symbol_table, context);
+    this.body.check_types(checker, symbol_table, context, return_type);
+  }
 }
 
 export class DoWhileLoop extends StatementNode {
@@ -263,6 +364,11 @@ export class DoWhileLoop extends StatementNode {
     context.emit(new ConditionalJump(this.condition.emit_ir(context), body_label));
     context.emit(new JumpInstruction(finished_label));
   }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type: Type): void {
+    this.body.check_types(checker, symbol_table, context, return_type);
+    this.condition.check_types(checker, symbol_table, context);
+  }
 }
 
 export class BlockStatement extends StatementNode {
@@ -273,6 +379,12 @@ export class BlockStatement extends StatementNode {
   emit_ir(context: FunctionCompilationContext) {
     for (const statement of this.statements.get_items_reversed()) {
       statement.emit_ir(context);
+    }
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type: Type): void {
+    for (const stmt of this.statements.get_items_reversed()) {
+      stmt.check_types(checker, symbol_table, context, return_type);
     }
   }
 }
@@ -288,6 +400,24 @@ export class ReturnStatement extends StatementNode {
     context.emit(new JumpInstruction(context.function_name + "_end"));
     // context.emit(new ReturnInstruction(destination));
   }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type?: Type): void {
+    if (return_type == null) return;
+    const actual_type = this.expression.get_type(symbol_table);
+    if (!actual_type.equals(return_type)) {
+      checker.add_diagnostic(
+        new Diagnostic(
+          0,
+          0,
+          `type mismatch: expected '${return_type.name}', got '${actual_type.name}'`,
+          "",
+          "",
+          `${context}, return statement`,
+        ),
+      );
+    }
+    this.expression.check_types(checker, symbol_table, context);
+  }
 }
 
 export class BreakStatement extends StatementNode {
@@ -298,6 +428,8 @@ export class BreakStatement extends StatementNode {
   emit_ir(context: FunctionCompilationContext) {
     context.emit(new JumpInstruction(this.loop_name.lexeme + "_end"));
   }
+
+  check_types(): void {}
 }
 
 export class ContinueStatement extends StatementNode {
@@ -308,6 +440,8 @@ export class ContinueStatement extends StatementNode {
   emit_ir(context: FunctionCompilationContext) {
     context.emit(new JumpInstruction(this.loop_name.lexeme + "_condition"));
   }
+
+  check_types(): void {}
 }
 
 export class ExpressionStatement extends StatementNode {
@@ -318,10 +452,45 @@ export class ExpressionStatement extends StatementNode {
   emit_ir(context: FunctionCompilationContext) {
     this.expression.emit_ir(context);
   }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string, return_type?: Type): void {
+    this.expression.check_types(checker, symbol_table, context);
+  }
+}
+
+export class SymbolTable {
+  private locals: Map<string, { type: Token; is_parameter: boolean }> = new Map();
+  private global_types: Map<string, Type>;
+
+  constructor(global_types: Map<string, Type>) {
+    this.global_types = global_types;
+  }
+
+  define_variable(name: string, type: Token) {
+    this.locals.set(name, { type, is_parameter: false });
+  }
+
+  define_parameter(name: string, type: Token) {
+    this.locals.set(name, { type, is_parameter: true });
+  }
+
+  lookup(name: string): { type: Token; is_parameter: boolean } | undefined {
+    return this.locals.get(name);
+  }
+
+  has_global(name: string): boolean {
+    return this.global_types.has(name);
+  }
+
+  get_global_type(name: string): Type | undefined {
+    return this.global_types.get(name);
+  }
 }
 
 export abstract class ExpressionNode extends BaseNode {
   abstract emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand): Operand;
+  abstract get_type(ctx: SymbolTable): Type;
+  abstract check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void;
 }
 
 export class BinaryExpression extends ExpressionNode {
@@ -342,6 +511,17 @@ export class BinaryExpression extends ExpressionNode {
     context.emit(new BinaryInstruction(destination, left, this.op.type, right));
     return destination;
   }
+
+  get_type(ctx: SymbolTable): Type {
+    this.left.get_type(ctx);
+    this.right.get_type(ctx);
+    return IntType.instance;
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    this.left.check_types(checker, symbol_table, context);
+    this.right.check_types(checker, symbol_table, context);
+  }
 }
 
 export class UnaryExpression extends ExpressionNode {
@@ -359,6 +539,15 @@ export class UnaryExpression extends ExpressionNode {
     if (this.op.type !== TokenType.STAR) context.emit(new UnaryInstruction(destination, left, this.op.type));
     else context.emit(new LoadInstruction(destination, left));
     return destination;
+  }
+
+  get_type(ctx: SymbolTable): Type {
+    this.target.get_type(ctx);
+    return IntType.instance;
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    this.target.check_types(checker, symbol_table, context);
   }
 }
 
@@ -381,6 +570,17 @@ export class PointerAssignmentExpression extends ExpressionNode {
     context.emit(new MoveInstruction(destination, expr));
     return destination;
   }
+
+  get_type(ctx: SymbolTable): Type {
+    this.target.get_type(ctx);
+    this.expr.get_type(ctx);
+    return IntType.instance;
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    this.target.check_types(checker, symbol_table, context);
+    this.expr.check_types(checker, symbol_table, context);
+  }
 }
 
 export class AssignmentExpression extends ExpressionNode {
@@ -392,7 +592,7 @@ export class AssignmentExpression extends ExpressionNode {
   }
 
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
-    const is_parameter = context.parameters.includes(this.variable_name.lexeme);
+    const is_parameter = context.parameters.some((p) => p.name.lexeme === this.variable_name.lexeme);
     if (is_parameter) throw new Error("Invariant: Cannot assign to a parameter");
 
     const is_global_variable = context.global_variables.includes(this.variable_name.lexeme);
@@ -413,6 +613,70 @@ export class AssignmentExpression extends ExpressionNode {
     context.emit(new MoveInstruction(preferred_destination, destination));
     return preferred_destination;
   }
+
+  get_type(ctx: SymbolTable): Type {
+    this.expr.get_type(ctx);
+    return IntType.instance;
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    const local = symbol_table.lookup(this.variable_name.lexeme);
+    const global_type = symbol_table.get_global_type(this.variable_name.lexeme);
+
+    if (local == null && global_type == null) {
+      const pos = get_token_position(this.variable_name);
+      checker.add_diagnostic(
+        new Diagnostic(
+          pos.line,
+          pos.column,
+          `unknown variable '${this.variable_name.lexeme}'`,
+          "",
+          make_underline(pos.column, this.variable_name.lexeme.length),
+          `${context}`,
+        ),
+      );
+      throw new Error(`Unknown variable: ${this.variable_name.lexeme}`);
+    }
+
+    let expected_type: Type | null = null;
+    if (local != null) {
+      expected_type = resolve_type(local.type);
+    } else if (global_type != null) {
+      expected_type = global_type;
+    }
+
+    if (expected_type == null) {
+      const pos = get_token_position(this.variable_name);
+      checker.add_diagnostic(
+        new Diagnostic(
+          pos.line,
+          pos.column,
+          `unknown type for variable '${this.variable_name.lexeme}'`,
+          "",
+          make_underline(pos.column, this.variable_name.lexeme.length),
+          `${context}, assignment to '${this.variable_name.lexeme}'`,
+        ),
+      );
+      return;
+    }
+
+    const actual_type = this.expr.get_type(symbol_table);
+    if (!actual_type.equals(expected_type)) {
+      const pos = get_token_position(this.variable_name);
+      checker.add_diagnostic(
+        new Diagnostic(
+          pos.line,
+          pos.column,
+          `type mismatch: expected '${expected_type.name}', got '${actual_type.name}'`,
+          "",
+          make_underline(pos.column, this.variable_name.lexeme.length),
+          `${context}, assignment to '${this.variable_name.lexeme}'`,
+        ),
+      );
+    }
+
+    this.expr.check_types(checker, symbol_table, context);
+  }
 }
 
 export class GroupingExpression extends ExpressionNode {
@@ -422,6 +686,14 @@ export class GroupingExpression extends ExpressionNode {
 
   emit_ir(context: FunctionCompilationContext, preferred_destination?: Operand) {
     return this.expr.emit_ir(context, preferred_destination);
+  }
+
+  get_type(ctx: SymbolTable): Type {
+    return this.expr.get_type(ctx);
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    this.expr.check_types(checker, symbol_table, context);
   }
 }
 
@@ -437,6 +709,12 @@ export class LiteralExpression extends ExpressionNode {
     context.emit(new MoveInstruction(preferred_destination, ret));
     return preferred_destination;
   }
+
+  get_type(_ctx: SymbolTable): Type {
+    return IntType.instance;
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {}
 }
 
 export class FunctionCall extends ExpressionNode {
@@ -461,6 +739,84 @@ export class FunctionCall extends ExpressionNode {
     context.emit(new MoveInstruction(destination, { type: "return_register" }));
     return destination;
   }
+
+  get_type(_ctx: SymbolTable): Type {
+    return IntType.instance;
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    const func_info = checker.get_function_info(this.func_name.lexeme);
+    if (func_info == null) {
+      const pos = get_token_position(this.func_name);
+      checker.add_diagnostic(
+        new Diagnostic(
+          pos.line,
+          pos.column,
+          `unknown function '${this.func_name.lexeme}'`,
+          "",
+          make_underline(pos.column, this.func_name.lexeme.length),
+          `${context}`,
+        ),
+      );
+      return;
+    }
+
+    const arg_list = this.args.get_items();
+    const param_list = func_info.parameters;
+
+    if (arg_list.length !== param_list.length) {
+      const pos = get_token_position(this.func_name);
+      checker.add_diagnostic(
+        new Diagnostic(
+          pos.line,
+          pos.column,
+          `expected ${param_list.length} arguments, got ${arg_list.length}`,
+          "",
+          make_underline(pos.column, this.func_name.lexeme.length),
+          `${context}, call to '${this.func_name.lexeme}'`,
+        ),
+      );
+      return;
+    }
+
+    for (let i = 0; i < arg_list.length; i++) {
+      const arg = arg_list[i];
+      const param = param_list[i];
+      const actual_type = arg.get_type(symbol_table);
+      const expected_type = resolve_type(param.type);
+
+      if (expected_type == null) {
+        const pos = get_token_position(param.type);
+        checker.add_diagnostic(
+          new Diagnostic(
+            pos.line,
+            pos.column,
+            `unknown parameter type '${param.type.lexeme}'`,
+            "",
+            make_underline(pos.column, param.type.lexeme.length),
+            `${context}, parameter '${param.name.lexeme}' of function '${this.func_name.lexeme}'`,
+          ),
+        );
+        continue;
+      }
+
+      if (!actual_type.equals(expected_type)) {
+        const pos = get_token_position(this.func_name);
+        checker.add_diagnostic(
+          new Diagnostic(
+            pos.line,
+            pos.column,
+            `type mismatch: expected '${expected_type.name}', got '${actual_type.name}'`,
+            "",
+            make_underline(pos.column, this.func_name.lexeme.length),
+            `${context}, argument ${i + 1} to '${this.func_name.lexeme}'`,
+          ),
+        );
+      }
+
+      arg.check_types(checker, symbol_table, context);
+    }
+  }
 }
 
 export class VariableReference extends ExpressionNode {
@@ -479,7 +835,7 @@ export class VariableReference extends ExpressionNode {
       return preferred_destination;
     }
 
-    const parameter_index = context.parameters.indexOf(this.name.lexeme);
+    const parameter_index = context.parameters.findIndex((p) => p.name.lexeme === this.name.lexeme);
     if (parameter_index !== -1) {
       const temporary = context.get_next_temp_reg();
       context.emit(new MoveInstruction(temporary, { type: "literal", is_parameter: true, value: parameter_index }));
@@ -494,11 +850,35 @@ export class VariableReference extends ExpressionNode {
     context.emit(new MoveInstruction(preferred_destination, ret));
     return preferred_destination;
   }
+
+  get_type(ctx: SymbolTable): Type {
+    const symbol = ctx.lookup(this.name.lexeme);
+    if (symbol != null) {
+      return this.resolve_type(symbol.type);
+    }
+
+    const global_type = ctx.get_global_type(this.name.lexeme);
+    if (global_type != null) {
+      return global_type;
+    }
+
+    throw new Error(`Unknown variable: ${this.name.lexeme}`);
+  }
+
+  check_types(checker: TypeChecker, symbol_table: SymbolTable, context: string): void {
+    this.get_type(symbol_table);
+  }
+
+  private resolve_type(type_token: Token): Type {
+    if (type_token.lexeme === "int") return IntType.instance;
+    throw new Error(`Unknown type: ${type_token.lexeme}`);
+  }
 }
 
 class GlobalDefinitions extends BaseNode {
   functions: ListNode<FunctionDefinition> = new ListNode([]);
   variables: ListNode<VariableDefinition> = new ListNode([]);
+  variable_types: Map<string, Token> = new Map();
 
   add_function(function_definition: FunctionDefinition) {
     this.functions.add(function_definition);
@@ -506,6 +886,19 @@ class GlobalDefinitions extends BaseNode {
 
   add_variable(variable_definition: VariableDefinition) {
     this.variables.add(variable_definition);
+    this.variable_types.set(variable_definition.name.lexeme, variable_definition.type);
+  }
+
+  check_types(checker: TypeChecker): void {
+    const global_types = checker.get_global_types();
+    const symbol_table = new SymbolTable(global_types);
+
+    for (const global of this.variables.get_items()) {
+      symbol_table.define_variable(global.name.lexeme, global.type);
+      global.check_types(checker, symbol_table, "");
+    }
+
+    for (const func of this.functions.get_items()) func.check_types(checker, global_types);
   }
 }
 
@@ -520,17 +913,30 @@ export const Reducers = {
     return rest;
   },
 
-  global_variable_definition: (bag: { variable_name: Token; number: Token }) =>
-    new VariableDefinition(bag.variable_name, new LiteralExpression(bag.number)),
-  function_definition: (bag: { name: Token; parameters?: ListNode<Token>; statements?: ListNode<StatementNode> }) =>
-    new FunctionDefinition(bag.name, bag.parameters ?? new ListNode([]), bag.statements ?? new ListNode([])),
-  parameter_list: (bag: { name: Token; rest?: ListNode<Token> }) =>
-    bag.rest == null ? new ListNode([bag.name]) : bag.rest.add(bag.name),
+  global_variable_definition: (bag: { variable_name: Token; type: Token; number: Token }) =>
+    new VariableDefinition(bag.variable_name, bag.type, new LiteralExpression(bag.number)),
+  function_definition: (bag: {
+    name: Token;
+    parameters?: ListNode<ParameterNode>;
+    return_type: Token;
+    statements?: ListNode<StatementNode>;
+  }) =>
+    new FunctionDefinition(
+      bag.name,
+      bag.parameters ?? new ListNode([]),
+      bag.return_type,
+      bag.statements ?? new ListNode([]),
+    ),
+  parameter_list: (bag: { name: Token; type: Token; rest?: ListNode<ParameterNode> }) =>
+    bag.rest == null
+      ? new ListNode([new ParameterNode(bag.name, bag.type)])
+      : bag.rest.add(new ParameterNode(bag.name, bag.type)),
+  type: (bag: { type_name: Token }) => bag.type_name,
 
   statement_list: (bag: { stmt: StatementNode; rest?: ListNode<StatementNode> }) =>
     bag.rest == null ? new ListNode([bag.stmt]) : bag.rest.add(bag.stmt),
-  variable_definition: (bag: { variable_name: Token; initializer: ExpressionNode }) =>
-    new VariableDefinition(bag.variable_name, bag.initializer),
+  variable_definition: (bag: { variable_name: Token; type: Token; initializer: ExpressionNode }) =>
+    new VariableDefinition(bag.variable_name, bag.type, bag.initializer),
   variable_definition_statement: (bag: { variable_definition: VariableDefinition }) => bag.variable_definition,
   statement: (bag: { stmt: StatementNode }) => bag.stmt,
   block_statement: (bag: { statement_list?: ListNode<StatementNode> }) =>
