@@ -3,7 +3,7 @@ import path from "path";
 import { lexerGenerator, TokenMetadata, TokenType, toStringifiedTokenType } from "./lexer";
 import { buildProductions, Sparse } from "@scinorandex/sparse";
 import { BaseNode, Program, Reducers } from "./parser";
-import { BasicBlock, to_ssa } from "./intermediate";
+import { BasicBlock, FunctionCallInstruction, to_ssa } from "./intermediate";
 import { compile, RelocatableUnit } from "./compiler";
 import { load } from "./linker";
 import { create_runner } from "./vm";
@@ -13,6 +13,29 @@ import { optimize } from "./optimizer";
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
 const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
 const GPR_COUNT = 2;
+
+function filter_reachable_units(units: [string, RelocatableUnit][], entry: string): [string, RelocatableUnit][] {
+  const unit_map = new Map(units);
+
+  const reachable = new Set<string>([entry]);
+  const queue = [entry] as string[];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const unit = unit_map.get(current);
+    if (!unit) continue;
+
+    for (const instr of unit.compilation_context.emitted) {
+      if (instr instanceof FunctionCallInstruction) {
+        const called = instr.function_name;
+        if (reachable.has(called)) continue;
+        reachable.add(called);
+        queue.push(called);
+      }
+    }
+  }
+
+  return units.filter(([name]) => reachable.has(name));
+}
 
 async function main() {
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));
@@ -46,14 +69,14 @@ async function main() {
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
   });
 
-  const linked = load(units, globals);
+  const linked = load(filter_reachable_units(units, "main"), globals);
   console.log("Printing linked code: ================");
   for (let i = 0; i < linked.length; i++) {
     const instruction = linked[i];
     console.log(`[${i.toString().padStart(2, "0")}]: ${instruction.to_stringified()}`);
   }
 
-  // start_repl(create_runner(linked));
+  start_repl(create_runner(linked));
 }
 
 export function pretty_print(x: BasicBlock[]) {

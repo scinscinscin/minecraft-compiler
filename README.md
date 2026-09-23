@@ -68,10 +68,10 @@ The Virtual Machine allows you to
  - [ ] - Code optimization
    - [x] - Implement constant folding / propagation
    - [ ] - Remove temporary blocks that coalesce registers in the same way
-   - [ ] - Remove unused functions from being linked
+   - [x] - Remove unused functions from being linked
    - [x] - Remove unused blocks that never get jumped into
- - [ ] - Type checking
-   - [ ] - Structures / Pointers / Arrays
+ - [ ] - Type checking and static analysis
+   - [ ] - Structures / Arrays
  - [ ] - Standard Library
    - [ ] - Implement arithmetic using ALU primitives
    - [ ] - Importing code from other files

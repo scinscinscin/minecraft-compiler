@@ -12,3 +12,13 @@ function main () {
 
   return c;
 }
+
+function unused(){
+  var x = 42;
+  return x;
+}
+
+function unused2(){
+  var x = 42;
+  return x;
+}
