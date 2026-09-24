@@ -70,7 +70,8 @@ The Virtual Machine allows you to
    - [ ] - Remove temporary blocks that coalesce registers in the same way
    - [x] - Remove unused functions from being linked
    - [x] - Remove unused blocks that never get jumped into
- - [ ] - Type checking and static analysis
+ - [x] - Type checking and static analysis
+ - [ ] - Compound structures
    - [ ] - Structures / Arrays
  - [ ] - Standard Library
    - [ ] - Implement arithmetic using ALU primitives

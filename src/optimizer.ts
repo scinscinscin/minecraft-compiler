@@ -1,4 +1,5 @@
 import { pretty_print } from ".";
+import { RelocatableUnit } from "./compiler";
 import {
   BasicBlock,
   compare_operands,
@@ -215,4 +216,27 @@ export function enforce_graph_consistency(fn_compile_context: FunctionCompilatio
       }
     }
   }
+}
+
+export function filter_reachable_units(units: [string, RelocatableUnit][], entry: string): [string, RelocatableUnit][] {
+  const unit_map = new Map(units);
+
+  const reachable = new Set<string>([entry]);
+  const queue = [entry] as string[];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const unit = unit_map.get(current);
+    if (!unit) continue;
+
+    for (const instr of unit.compilation_context.emitted) {
+      if (instr instanceof FunctionCallInstruction) {
+        const called = instr.function_name;
+        if (reachable.has(called)) continue;
+        reachable.add(called);
+        queue.push(called);
+      }
+    }
+  }
+
+  return units.filter(([name]) => reachable.has(name));
 }

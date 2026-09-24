@@ -22,5 +22,3 @@ function unused2(): int{
   var x: int = 42;
   return x;
 }
-
-e

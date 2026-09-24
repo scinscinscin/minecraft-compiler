@@ -1,118 +1,173 @@
-import { Token as SlexToken } from "@scinorandex/slex";
-import { TokenMetadata, TokenType } from "./lexer";
-import { Program, ParameterNode, SymbolTable } from "./parser";
-import { Type, IntType } from "./type";
+import { Token } from "./parser";
 
-type Token = SlexToken<TokenType, TokenMetadata>;
-
-function resolve_type(token: Token): Type | null {
-  if (token.lexeme === "int") return IntType.instance;
-  return null;
+export function print_diagnostic(
+  source_file_path: string,
+  source: string,
+  line: number,
+  column: number,
+  error: string,
+) {
+  console.log(`Error: ${error}`);
+  console.log(`  at ${source_file_path}:${line}:${column}`);
+  console.log(build_error_window(source, line, column));
 }
 
-export class Diagnostic {
+export const build_error_window = (file: string, line: number, column: number) => {
+  const lines = file.split("\n");
+
+  const length = Math.max(`${line}`.length, `${column}`.length);
+  let second = "",
+    third = "";
+
+  for (let i = 0; i < column + length + 3; i++) {
+    second += " ";
+    third += "-";
+  }
+  second += "|";
+  third += "┘";
+
+  let window = `${line.toString().padStart(length)} | ${
+    lines.length <= line - 1 ? "" : lines[line - 1]
+  }\n${second}\n${third}\n`;
+
+  if (line < lines.length) window += `${(line + 1).toString().padStart(length)} | ${lines[line]}\n`;
+  return window;
+};
+
+export abstract class Type {
+  abstract stringify(): string;
+  abstract equals(other: Type): boolean;
+
+  abstract is_number(): boolean;
+  abstract is_callable(): boolean;
+}
+
+export class IntType extends Type {
+  static instance = new IntType();
+
+  stringify() {
+    return "int";
+  }
+
+  equals(other: Type) {
+    return other instanceof IntType;
+  }
+
+  is_number() {
+    return true;
+  }
+
+  is_callable() {
+    return false;
+  }
+}
+
+export class CallableType extends Type {
   constructor(
-    public line: number,
-    public column: number,
-    public message: string,
-    public source_line: string,
-    public underline: string,
-    public context: string,
-  ) {}
-}
-
-export class TypeCheckResult {
-  private diagnostics: Diagnostic[] = [];
-
-  has_errors(): boolean {
-    return this.diagnostics.length > 0;
+    public readonly return_type: Type,
+    public readonly parameters: Type[],
+  ) {
+    super();
   }
 
-  add_diagnostic(diagnostic: Diagnostic) {
-    this.diagnostics.push(diagnostic);
+  stringify() {
+    return `(${this.parameters.map((x) => x.stringify()).join(", ")}) -> ${this.return_type.stringify()}`;
   }
 
-  get_errors(): Diagnostic[] {
-    return this.diagnostics;
+  equals(other: Type) {
+    if (!(other instanceof CallableType)) return false;
+
+    if (this.return_type.equals(other.return_type) === false) return false;
+    if (this.parameters.length !== other.parameters.length) return false;
+
+    for (let i = 0; i < this.parameters.length; i++)
+      if (this.parameters[i].equals(other.parameters[i]) === false) return false;
+
+    return true;
   }
 
-  print_errors() {
-    for (const diag of this.diagnostics) {
-      console.log(`\nError: ${diag.message}`);
-      console.log(`  at scratch.txt:${diag.line}:${diag.column}`);
-      console.log(`  |`);
-      console.log(`${diag.line} | ${diag.source_line}`);
-      console.log(`  | ${diag.underline}`);
-      if (diag.context) {
-        console.log(`  |`);
-        console.log(`  in ${diag.context}`);
-      }
-    }
-    console.log();
+  is_callable() {
+    return true;
+  }
+
+  is_number() {
+    return false;
   }
 }
 
-export class TypeChecker {
-  private function_registry = new Map<string, { parameters: ParameterNode[]; return_type: Token }>();
-  private global_types = new Map<string, Type>();
-  private result: TypeCheckResult = new TypeCheckResult();
+export class UnknownType extends Type {
+  static instance = new UnknownType();
 
-  check_all(program: Program) {
-    this.build_registry(program);
-    this.check_program(program);
+  stringify() {
+    return "unknown";
   }
 
-  build_registry(program: Program) {
-    for (const func of program.definitions.functions.get_items()) {
-      this.function_registry.set(func.name.lexeme, {
-        parameters: func.parameters.get_items(),
-        return_type: func.return_type,
-      });
-    }
-    for (const global of program.definitions.variables.get_items()) {
-      const global_type = resolve_type(global.type);
-      if (global_type != null) {
-        this.global_types.set(global.name.lexeme, global_type);
-      }
-    }
+  equals(other: Type) {
+    return false;
   }
 
-  check_program(program: Program) {
-    const global_types = this.global_types;
-    for (const func of program.definitions.functions.get_items()) {
-      const symbol_table = new SymbolTable(global_types);
-      for (const param of func.parameters.get_items()) {
-        symbol_table.define_parameter(param.name.lexeme, param.type);
-      }
-      func.check_types(this, global_types);
-    }
+  is_number() {
+    return false;
   }
 
-  add_global(global_name: string, global_type: Type) {
-    this.global_types.set(global_name, global_type);
+  is_callable() {
+    return false;
+  }
+}
+
+const intrinsic_types = new Map<string, Type>([["int", IntType.instance]]);
+export class StaticAnalysisContext {
+  constructor(public readonly parent: StaticAnalysisContext | null = null) {}
+  get_root(): StaticAnalysisContext {
+    return this.parent == null ? this : this.parent.get_root();
   }
 
-  add_diagnostic(diagnostic: Diagnostic) {
-    this.result.add_diagnostic(diagnostic);
+  return_type: Type | null = null;
+  set_return_type(type: Type) {
+    this.return_type = type;
   }
 
-  get_function_info(name: string): { parameters: ParameterNode[]; return_type: Token } | undefined {
-    return this.function_registry.get(name);
+  errors: { token: Token; message: string }[] = [];
+  emit_error(token: Token, message: string) {
+    this.get_root().errors.push({ token, message });
   }
 
-  get_global_types(): Map<string, Type> {
-    return this.global_types;
+  emit_type_mismatch(token: Token, expected: Type, actual: Type) {
+    this.emit_error(token, `type mismatch: expected '${expected.stringify()}', got '${actual.stringify()}'`);
   }
 
-  get_errors(): Diagnostic[] {
-    return this.result.get_errors();
+  lookup(token: Token): Type {
+    const name = token.lexeme;
+    if (intrinsic_types.has(name)) return intrinsic_types.get(name)!;
+
+    this.emit_error(token, `Unknown type: ${name}`);
+    return UnknownType.instance;
   }
 
-  has_errors(): boolean {
-    return this.result.has_errors();
+  environment: Map<string, Type> = new Map();
+  get_identifier_type(token: Token): Type | null {
+    if (this.environment.has(token.lexeme)) return this.environment.get(token.lexeme)!;
+    if (this.parent != null) return this.parent.get_identifier_type(token);
+
+    return null;
+  }
+  define_identifier(token: Token, type: Type) {
+    this.environment.set(token.lexeme, type);
   }
 
-  print_errors() {
-    this.result.print_errors();
+  break_points: string[] = [];
+  add_breakpoint(name: string) {
+    this.break_points.push(name);
+  }
+
+  is_breakpoint(name: string): boolean {
+    const t = this.break_points.includes(name);
+    if (t) return true;
+    if (this.parent != null) return this.parent.is_breakpoint(name);
+    return false;
+  }
+
+  fork() {
+    return new StaticAnalysisContext(this);
   }
 }

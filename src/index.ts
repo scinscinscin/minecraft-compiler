@@ -1,42 +1,19 @@
 import fs from "fs/promises";
 import path from "path";
 import { lexerGenerator, TokenMetadata, TokenType, toStringifiedTokenType } from "./lexer";
-import { buildProductions, Sparse } from "@scinorandex/sparse";
+import { buildProductions, LR1ParserGraveError, Sparse } from "@scinorandex/sparse";
 import { BaseNode, Program, Reducers } from "./parser";
-import { BasicBlock, FunctionCallInstruction, to_ssa } from "./intermediate";
+import { BasicBlock, to_ssa } from "./intermediate";
 import { compile, RelocatableUnit } from "./compiler";
 import { load } from "./linker";
 import { create_runner } from "./vm";
 import { start_repl } from "./repl";
-import { optimize } from "./optimizer";
-import { TypeChecker } from "./typechecker";
+import { filter_reachable_units, optimize } from "./optimizer";
+import { print_diagnostic, StaticAnalysisContext } from "./typechecker";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
 const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
 const GPR_COUNT = 2;
-
-function filter_reachable_units(units: [string, RelocatableUnit][], entry: string): [string, RelocatableUnit][] {
-  const unit_map = new Map(units);
-
-  const reachable = new Set<string>([entry]);
-  const queue = [entry] as string[];
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const unit = unit_map.get(current);
-    if (!unit) continue;
-
-    for (const instr of unit.compilation_context.emitted) {
-      if (instr instanceof FunctionCallInstruction) {
-        const called = instr.function_name;
-        if (reachable.has(called)) continue;
-        reachable.add(called);
-        queue.push(called);
-      }
-    }
-  }
-
-  return units.filter(([name]) => reachable.has(name));
-}
 
 async function main() {
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));
@@ -45,7 +22,8 @@ async function main() {
     toStringifiedTokenType,
   });
 
-  const lexer = lexerGenerator.generate(await fs.readFile(EXAMPLE_FILE, "utf8"), () => ({}));
+  const source_code = await fs.readFile(EXAMPLE_FILE, "utf8");
+  const lexer = lexerGenerator.generate(source_code, () => ({}));
   const parser = parserGenerator.generate(lexer, {
     reducer: ({ bag, name }) => {
       const reducer = Reducers[name ?? ""];
@@ -54,19 +32,36 @@ async function main() {
     },
   });
 
-  const rootNode = parser.parse().result as Program | null;
-  if (rootNode == null) throw new Error("Invariant: Root node should not be null. ");
+  // Parse the program and print any parsng errors found
+  const parse = () => {
+    try {
+      return { success: true as const, result: parser.parse().result };
+    } catch (err) {
+      return { success: false as const, err: err as LR1ParserGraveError<TokenType, TokenMetadata> };
+    }
+  };
 
-  const type_checker = new TypeChecker();
-  type_checker.check_all(rootNode);
-  if (type_checker.has_errors()) {
-    type_checker.print_errors();
-    process.exit(1);
+  const parsing_result = parse();
+  if (parsing_result.success === false) {
+    const { currentToken: token, reason } = parsing_result.err;
+    return print_diagnostic(EXAMPLE_FILE, source_code, token.line, token.column, reason);
   }
 
-  const globals = rootNode.definitions.variables.get_items_reversed();
-  const functions = rootNode.definitions.functions.get_items_reversed();
+  const root_node = parsing_result.result as Program | null;
+  if (root_node == null) throw new Error("Invariant: Root node should not be null. ");
 
+  // Statically analyze the program
+  const static_context = new StaticAnalysisContext();
+  root_node.verify_static_analysis(static_context);
+  if (static_context.errors.length > 0) {
+    for (const error of static_context.errors)
+      print_diagnostic(EXAMPLE_FILE, source_code, error.token.line, error.token.column, error.message);
+    return;
+  }
+
+  // Proceed with compilation
+  const globals = root_node.definitions.variables.get_items_reversed();
+  const functions = root_node.definitions.functions.get_items_reversed();
   const units = functions.map((fn) => {
     const intermediate_representation = fn.compile(globals.map((x) => x.name.lexeme));
     console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
