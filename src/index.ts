@@ -12,7 +12,7 @@ import { filter_reachable_units, optimize } from "./optimizer";
 import { print_diagnostic, StaticAnalysisContext } from "./typechecker";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
+const EXAMPLE_FILE = path.join(process.cwd(), "./examples/fib.txt");
 const GPR_COUNT = 2;
 
 async function main() {

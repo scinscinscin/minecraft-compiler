@@ -136,7 +136,7 @@ export class StaticAnalysisContext {
     this.emit_error(token, `type mismatch: expected '${expected.stringify()}', got '${actual.stringify()}'`);
   }
 
-  lookup(token: Token): Type {
+  lookup_type(token: Token): Type {
     const name = token.lexeme;
     if (intrinsic_types.has(name)) return intrinsic_types.get(name)!;
 

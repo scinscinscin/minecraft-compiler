@@ -1,4 +1,4 @@
-function main() : int {
+function main(): int {
   var n1: int = 0;
   var n2: int = 1;
   var nextterm: int = 1;

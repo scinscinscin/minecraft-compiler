@@ -744,7 +744,7 @@ class TypeIdentifier extends TypeExpression {
   }
 
   get_type(ctx: StaticAnalysisContext): Type {
-    return ctx.lookup(this.name);
+    return ctx.lookup_type(this.name);
   }
 }
 

@@ -6,11 +6,11 @@ Dust is a combiantion of C semantics with JavaScript / TypeScript syntax that co
 
 ```js
 // An implementation of the Fibonacci sequence in Dust
-function main () {
-  var n1 = 0;
-  var n2 = 1;
-  var nextterm = 1;
-  var i = 0;
+function main(): int {
+  var n1: int = 0;
+  var n2: int = 1;
+  var nextterm: int = 1;
+  var i: int = 0;
 
   while loop (i < 5) {
     nextterm = n1 + n2;
@@ -71,6 +71,8 @@ The Virtual Machine allows you to
    - [x] - Remove unused functions from being linked
    - [x] - Remove unused blocks that never get jumped into
  - [x] - Type checking and static analysis
+   - [x] - Ensure variable and function usage is correct
+   - [x] - Ensure valid goto labels are used
  - [ ] - Compound structures
    - [ ] - Structures / Arrays
  - [ ] - Standard Library
@@ -120,3 +122,14 @@ The Virtual Machine allows you to
  - https://web.stanford.edu/class/archive/cs/cs143/cs143.1128/ - Compilers 101 up to data flow optimization. Issues: It handwaves a lot of the details like for example: SSA
  - https://en.wikipedia.org/wiki/Static_single-assignment_form - Cytron's SSA algorithm was directly implemented in this compiler to create the control flow graph and SSA form
  - https://dl.acm.org/doi/pdf/10.1145/872726.806984 - The Chaitin algorithm is used to assign registers, only partially implemented.
+
+## AI Disclosure
+
+I'm using this repo to test out local AI models (Qwen 3.6 35B a3b with variants) with OpenCode. I ask it to plan an implementation of a feature based on how I would implement them, and if I'm satisified with the plan I tell it to execute them. 
+
+All code generation is hand-written by me and so far the only lines of code it has in the repo are the following:
+ - `filter_reachable_units` in `src/optimizer.ts`. I specificlaly asked it to implement traverasl using breadth-first search and it's basically how I would have written it by hand.
+
+Some experiments that failed:
+ - Type checker and static analyzer - it "suceeded" but I wasn't happy with the results since that's not how I would have implemented it by hand.
+ - Diagnostic window for error reporting
