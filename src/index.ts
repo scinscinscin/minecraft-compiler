@@ -13,7 +13,7 @@ import { print_diagnostic, StaticAnalysisContext } from "./typechecker";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
 const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
-const GPR_COUNT = 2;
+const GPR_COUNT = 7;
 
 async function main() {
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));

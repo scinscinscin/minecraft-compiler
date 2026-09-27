@@ -1,8 +1,10 @@
 function main(): int {
-  var a: int = 0;
-  var b: int = a + unused();
+  var a: int = unused();
+  var b: int = 3;
+  var c: int = a;
+  var d: int = c + b;
 
-  return b;
+  return d;
 }
 
 function unused(): int{

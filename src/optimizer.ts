@@ -1,5 +1,6 @@
 import { pretty_print } from ".";
 import { RelocatableUnit } from "./compiler";
+import { TokenType } from "./lexer";
 import {
   BasicBlock,
   BinaryInstruction,
@@ -9,8 +10,11 @@ import {
   IRCode,
   JumpInstruction,
   liveliness_analysis,
+  MoveInstruction,
   Operand,
   Phi,
+  stringify_operand,
+  UnaryInstruction,
 } from "./intermediate";
 import { FunctionCompilationContext } from "./parser";
 
@@ -19,7 +23,9 @@ export function optimize(fn_compile_context: FunctionCompilationContext, cfg: Ba
 
   while (true) {
     let changed = false;
+    changed = changed || copy_propagation(fn_compile_context, cfg);
     changed = changed || constant_propagation(cfg, constant_cache);
+    // changed = changed || cse(fn_compile_context, cfg);
     changed = changed || dead_code_elimination(fn_compile_context, cfg);
     changed = changed || statement_replacement(fn_compile_context, cfg);
     changed = changed || dead_jump_elimination(fn_compile_context, cfg);
@@ -254,6 +260,44 @@ export function peephole_optimizations(fn_compile_context: FunctionCompilationCo
           changed = true;
           fn_compile_context.replace_instruction(instr, is_identity);
           block.replace_instruction(instr, is_identity);
+        }
+      }
+    }
+  }
+
+  return changed;
+}
+
+/**
+ * Copy propagation: track operand equivalences and replace uses with their canonical values.
+ * Works on both the emitted IR and the CFG blocks (for phi operand substitution).
+ */
+function copy_propagation(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
+  let changed = false;
+
+  for (const block of cfg) {
+    for (const instruction of block.instructions) {
+      if (instruction instanceof MoveInstruction) {
+        const target = instruction.target;
+        const source = instruction.source;
+
+        if (
+          (source.type === "ssa_variable" || source.type === "temp_reg") &&
+          (target.type === "ssa_variable" || target.type === "temp_reg")
+        ) {
+          // replace all instances that call target down the line with source
+          for (const block of cfg) {
+            for (const instr of block.instructions) {
+              const inputs = instr.get_inputs();
+              if (inputs.some((x) => compare_operands(x, target))) {
+                instr.replace_operands(target, source);
+                changed = true;
+              }
+            }
+          }
+
+          fn_compile_context.remove_instruction(instruction);
+          block.remove_instruction(instruction);
         }
       }
     }

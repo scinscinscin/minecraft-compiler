@@ -67,9 +67,11 @@ The Virtual Machine allows you to
    - [x] - Break and continue statements
  - [ ] - Code optimization
    - [x] - Implement constant folding / propagation
+   - [x] - Implement copy propagation
    - [ ] - Remove temporary blocks that coalesce registers in the same way
    - [x] - Remove unused functions from being linked
    - [x] - Remove unused blocks that never get jumped into
+   - [x] - Remove arithmetic identity operations
  - [x] - Type checking and static analysis
    - [x] - Ensure variable and function usage is correct
    - [x] - Ensure valid goto labels are used
