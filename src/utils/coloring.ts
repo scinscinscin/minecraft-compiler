@@ -160,6 +160,8 @@ export function color_graph(graph: AdjList, n: number) {
 export type ChaitinOutput = ReturnType<typeof color_graph>;
 
 export function greedy_coloring(adj_list: number[][]): number {
+  if (adj_list.length === 0) return 0;
+
   const node_count = adj_list.length;
   const colors = new Array(node_count).fill(-1);
 

@@ -2,6 +2,7 @@ import { pretty_print } from ".";
 import { RelocatableUnit } from "./compiler";
 import {
   BasicBlock,
+  BinaryInstruction,
   compare_operands,
   ConditionalJump,
   FunctionCallInstruction,
@@ -22,6 +23,7 @@ export function optimize(fn_compile_context: FunctionCompilationContext, cfg: Ba
     changed = changed || dead_code_elimination(fn_compile_context, cfg);
     changed = changed || statement_replacement(fn_compile_context, cfg);
     changed = changed || dead_jump_elimination(fn_compile_context, cfg);
+    changed = changed || peephole_optimizations(fn_compile_context, cfg);
     if (changed == false) break;
   }
 
@@ -239,4 +241,23 @@ export function filter_reachable_units(units: [string, RelocatableUnit][], entry
   }
 
   return units.filter(([name]) => reachable.has(name));
+}
+
+export function peephole_optimizations(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
+  let changed = false;
+
+  for (const block of cfg) {
+    for (const instr of block.instructions) {
+      if (instr instanceof BinaryInstruction) {
+        const is_identity = instr.check_arithmetic_identity();
+        if (is_identity != null) {
+          changed = true;
+          fn_compile_context.replace_instruction(instr, is_identity);
+          block.replace_instruction(instr, is_identity);
+        }
+      }
+    }
+  }
+
+  return changed;
 }

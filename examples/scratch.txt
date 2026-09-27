@@ -1,24 +1,11 @@
 function main(): int {
   var a: int = 0;
-  var b: int = 0;
-  var c: int = a + b;
+  var b: int = a + unused();
 
-  if(c){
-    c = 128;
-  }else{
-    c = 256;
-    return 1;
-  }
-
-  return c;
+  return b;
 }
 
 function unused(): int{
-  var x: int = 42;
-  return x;
-}
-
-function unused2(): int{
   var x: int = 42;
   return x;
 }

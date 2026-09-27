@@ -45,7 +45,7 @@ export function compare_operands(a: Operand, b: Operand) {
 
   return false;
 }
-function stringify_operand(operand: Operand) {
+export function stringify_operand(operand: Operand) {
   return JSON.stringify(operand);
 }
 
@@ -317,6 +317,35 @@ export class BinaryInstruction extends IRCode {
     if (compare_operands(from, this.right)) this.right = to;
     if (compare_operands(from, this.target)) this.target = to;
   }
+
+  check_arithmetic_identity() {
+    // check if at least one of the operands is a literal
+    if (
+      (this.left.type === "literal" && this.left.is_parameter == false) ||
+      (this.right.type === "literal" && this.right.is_parameter == false)
+    ) {
+      const [constant_operand, other_operand] = (
+        this.left.type === "literal" && this.left.is_parameter == false
+          ? [this.left, this.right]
+          : [this.right, this.left]
+      ) as [Operand & { type: "literal" }, Operand];
+
+      // Switch based on operation to determine if it can be optimized
+      if ((this.op === TokenType.PLUS || this.op === TokenType.PIPE) && constant_operand.value === 0)
+        return new MoveInstruction(this.target, other_operand);
+      else if (this.op === TokenType.AMPERSAND && constant_operand.value === 0xffff)
+        return new MoveInstruction(this.target, other_operand);
+      else if (
+        this.op === TokenType.MINUS &&
+        this.right.type === "literal" &&
+        this.right.is_parameter == false &&
+        this.right.value === 0
+      )
+        return new MoveInstruction(this.target, other_operand);
+    }
+
+    return null;
+  }
 }
 
 export class LoadInstruction extends IRCode {
@@ -576,14 +605,15 @@ export class FunctionCallInstruction extends IRCode {
   to_machine_code(context: RelocatableUnit) {
     context.emit(new PushMachineInstruction({ type: "instruction_pointer", input_offset: 0 }));
     context.emit(new JumpMachineInstruction(this.function_name + "_init"));
-    context.emit(
-      new BinaryMachineInstruction(
-        { type: "stack_pointer" },
-        { type: "stack_pointer" },
-        { type: "constant", value: this.operands.length },
-        TokenType.PLUS,
-      ),
-    );
+    if (this.operands.length > 0)
+      context.emit(
+        new BinaryMachineInstruction(
+          { type: "stack_pointer" },
+          { type: "stack_pointer" },
+          { type: "constant", value: this.operands.length },
+          TokenType.PLUS,
+        ),
+      );
   }
 
   replace_operands(from: Operand, to: Operand) {
@@ -604,6 +634,8 @@ export class FunctionExitInstruction extends IRCode {
     return [{ type: "return_register" } as Operand];
   }
 
+  // It doesn't emit anything on purpose since the function prologue is
+  // the responsibility of the the compile() function
   to_machine_code(context: RelocatableUnit) {
     // context.emit(new PopMachineInstruction({ type: "instruction_pointer" }));
   }
@@ -1216,7 +1248,8 @@ export class RegisterInterferenceGraph {
 
   create_nodes(operands: Operand[]) {
     for (const operand of operands) {
-      if (operand.type === "register_spill" || operand.type === "variable_spill") continue;
+      if (operand.type === "register_spill" || operand.type === "variable_spill" || operand.type === "return_register")
+        continue;
       this.get_index_of_operand(operand);
     }
   }
@@ -1225,6 +1258,7 @@ export class RegisterInterferenceGraph {
     if (compare_operands(a, b)) return;
     if (a.type === "register_spill" || b.type === "register_spill") return;
     if (a.type === "variable_spill" || b.type === "variable_spill") return;
+    if (a.type === "return_register" || b.type === "return_register") return;
 
     const index_a = this.get_index_of_operand(a);
     const index_b = this.get_index_of_operand(b);

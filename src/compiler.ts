@@ -489,7 +489,7 @@ function determine_register_spill_count(graph: RegisterInterferenceGraph) {
     .filter((x) => x[0].type === "register_spill")
     .map((x) => x[1]);
 
-  // rebuild the graph with just indices
+  // create another register interference graph with just the spills
   const new_graph = new RegisterInterferenceGraph();
 
   const existing = graph.get_adj_list();
@@ -577,14 +577,15 @@ export function compile(context: FunctionCompilationContext, blocks: BasicBlock[
   relocatable_unit.emit(new GotoLabelMachineInstruction(context.function_name + "_init"));
   relocatable_unit.emit(new PushMachineInstruction({ type: "base_pointer" }));
   relocatable_unit.emit(new MoveMachineInstruction({ type: "base_pointer" }, { type: "stack_pointer" }));
-  relocatable_unit.emit(
-    new BinaryMachineInstruction(
-      { type: "stack_pointer" },
-      { type: "stack_pointer" },
-      { type: "constant", value: spillage_locations },
-      TokenType.MINUS,
-    ),
-  );
+  if (spillage_locations > 0)
+    relocatable_unit.emit(
+      new BinaryMachineInstruction(
+        { type: "stack_pointer" },
+        { type: "stack_pointer" },
+        { type: "constant", value: spillage_locations },
+        TokenType.MINUS,
+      ),
+    );
 
   // Push registers we'll clobber to the stack
   const clobbered = [...new Set(Object.values(register_solution.color_map))].filter((x) => x != -1);
@@ -665,14 +666,15 @@ export function compile(context: FunctionCompilationContext, blocks: BasicBlock[
 
   // Deallocate the created variables
   // Pop BP and POP back to instruction pointer
-  relocatable_unit.emit(
-    new BinaryMachineInstruction(
-      { type: "stack_pointer" },
-      { type: "stack_pointer" },
-      { type: "constant", value: spillage_locations },
-      TokenType.PLUS,
-    ),
-  );
+  if (spillage_locations > 0)
+    relocatable_unit.emit(
+      new BinaryMachineInstruction(
+        { type: "stack_pointer" },
+        { type: "stack_pointer" },
+        { type: "constant", value: spillage_locations },
+        TokenType.PLUS,
+      ),
+    );
   relocatable_unit.emit(new PopMachineInstruction({ type: "base_pointer" }));
   relocatable_unit.emit(new PopMachineInstruction({ type: "instruction_pointer", input_offset: 2 }));
 
