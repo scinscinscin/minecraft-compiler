@@ -122,9 +122,16 @@ export class StaticAnalysisContext {
     return this.parent == null ? this : this.parent.get_root();
   }
 
-  return_type: Type | null = null;
+  private return_type: Type | null = null;
   set_return_type(type: Type) {
     this.return_type = type;
+  }
+
+  get_return_type(): Type {
+    if (this.return_type != null) return this.return_type;
+    if (this.parent != null) return this.parent.get_return_type();
+
+    throw new Error("Invariant: Return type should not be null");
   }
 
   errors: { token: Token; message: string }[] = [];

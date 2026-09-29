@@ -13,7 +13,6 @@ import {
   MoveInstruction,
   Operand,
   Phi,
-  stringify_operand,
   UnaryInstruction,
 } from "./intermediate";
 import { FunctionCompilationContext } from "./parser";
@@ -25,7 +24,7 @@ export function optimize(fn_compile_context: FunctionCompilationContext, cfg: Ba
     let changed = false;
     changed = changed || copy_propagation(fn_compile_context, cfg);
     changed = changed || constant_propagation(cfg, constant_cache);
-    // changed = changed || cse(fn_compile_context, cfg);
+    changed = changed || common_subexpression_elimination(fn_compile_context, cfg);
     changed = changed || dead_code_elimination(fn_compile_context, cfg);
     changed = changed || statement_replacement(fn_compile_context, cfg);
     changed = changed || dead_jump_elimination(fn_compile_context, cfg);
@@ -298,6 +297,43 @@ function copy_propagation(fn_compile_context: FunctionCompilationContext, cfg: B
 
           fn_compile_context.remove_instruction(instruction);
           block.remove_instruction(instruction);
+        }
+      }
+    }
+  }
+
+  return changed;
+}
+
+export function common_subexpression_elimination(
+  fn_compile_context: FunctionCompilationContext,
+  cfg: BasicBlock[],
+): boolean {
+  let changed = false;
+
+  again: for (const block of cfg) {
+    for (const instruction of block.instructions) {
+      if (instruction instanceof BinaryInstruction || instruction instanceof UnaryInstruction) {
+        // check all subsequent if they are equivalent
+
+        const idx = fn_compile_context.emitted.indexOf(instruction);
+        for (let i = idx + 1; i < fn_compile_context.emitted.length; i++) {
+          const replacement_candidate = fn_compile_context.emitted[i];
+
+          if (
+            (instruction instanceof BinaryInstruction && replacement_candidate instanceof BinaryInstruction) ||
+            (instruction instanceof UnaryInstruction && replacement_candidate instanceof UnaryInstruction)
+          ) {
+            // @ts-ignore
+            if (instruction.is_equivalent_to(replacement_candidate)) {
+              const mov = new MoveInstruction(replacement_candidate.target, instruction.target);
+              block.replace_instruction(replacement_candidate, mov);
+              fn_compile_context.replace_instruction(replacement_candidate, mov);
+
+              changed = true;
+              continue again;
+            }
+          }
         }
       }
     }

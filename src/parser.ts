@@ -89,7 +89,16 @@ export class FunctionCompilationContext {
 
   emitted = [] as IRCode[];
   emit(ir_code: IRCode) {
+    if (ir_code instanceof JumpInstruction && this.is_top_unconditional_jump()) {
+      return;
+    }
+
     this.emitted.push(ir_code);
+  }
+
+  is_top_unconditional_jump() {
+    const top = this.emitted[this.emitted.length - 1];
+    return top instanceof JumpInstruction;
   }
 
   remove_instruction(ir_code: IRCode) {
@@ -360,6 +369,7 @@ export class BlockStatement extends StatementNode {
   emit_ir(context: FunctionCompilationContext) {
     for (const statement of this.statements.get_items_reversed()) {
       statement.emit_ir(context);
+      if (statement instanceof ReturnStatement) break;
     }
   }
 
@@ -385,9 +395,11 @@ export class ReturnStatement extends StatementNode {
 
   verify_static_analysis(context: StaticAnalysisContext): void {
     const expr_type = this.expression.type_check(context);
-    const expected = context.return_type!;
+    const expected = context.get_return_type();
 
-    if (!expr_type.equals(expected)) context.emit_type_mismatch(this.r_token, expected, expr_type);
+    if (!expr_type.equals(expected)) {
+      context.emit_type_mismatch(this.r_token, expected, expr_type);
+    }
   }
 }
 

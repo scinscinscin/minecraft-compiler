@@ -14,7 +14,7 @@ import {
   UnaryMachineInstruction,
 } from "./compiler";
 import { TokenType } from "./lexer";
-import { ConstantCache } from "./optimizer";
+import { ConstantCache, dead_jump_elimination } from "./optimizer";
 import { FunctionCompilationContext } from "./parser";
 import { Heuristics, new_color_graph } from "./utils/coloring";
 
@@ -246,6 +246,13 @@ export class UnaryInstruction extends IRCode {
     if (compare_operands(from, this.left)) this.left = to;
     if (compare_operands(from, this.target)) this.target = to;
   }
+
+  is_equivalent_to(other: UnaryInstruction): boolean {
+    if (compare_operands(this.left, other.left) == false) return false;
+    if (this.op !== other.op) return false;
+
+    return true;
+  }
 }
 
 export class BinaryInstruction extends IRCode {
@@ -345,6 +352,14 @@ export class BinaryInstruction extends IRCode {
     }
 
     return null;
+  }
+
+  is_equivalent_to(other: BinaryInstruction): boolean {
+    if (compare_operands(this.left, other.left) == false) return false;
+    if (compare_operands(this.right, other.right) == false) return false;
+    if (this.op !== other.op) return false;
+
+    return true;
   }
 }
 
@@ -981,6 +996,9 @@ export function to_ssa(context: FunctionCompilationContext) {
   for (const variable of variables) variables_frontier[variable] = [];
 
   const cfg = create_cfg(intermediate_representation);
+  // CFGs can be created where not all blocks have predecessors, so need to
+  // remove the dead jumps until CFG stabilizes
+  while (dead_jump_elimination(context, cfg));
   const [dominators, frontier] = determine_frontier(cfg);
 
   function idom(index: number) {

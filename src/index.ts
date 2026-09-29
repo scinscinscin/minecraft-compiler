@@ -85,7 +85,6 @@ async function main() {
 export function pretty_print(x: BasicBlock[]) {
   console.log("================================");
   for (const b of x) {
-    console.log(b.labels);
     console.log(b.instructions.map((i) => i.to_stringified()));
   }
 }

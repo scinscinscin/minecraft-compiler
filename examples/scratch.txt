@@ -1,10 +1,20 @@
 function main(): int {
   var a: int = unused();
   var b: int = 3;
-  var c: int = a;
-  var d: int = c + b;
+  
+  var f: int = 0;
+  
+  if(f){
+    f = 1;
+  }else{
+    var c: int = a + b;
+    var d: int = a + b;
+    var e: int = c + d;
 
-  return d;
+    return e;
+  }
+
+  return 0;
 }
 
 function unused(): int{
