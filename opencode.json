@@ -8,9 +8,9 @@
       "options": { "baseURL": "http://192.168.0.78:8080/v1" },
       "models": {
         "your-model-id": {
-          "id": "Qwen3.6-35B-A3B-MTP-GGUF:IQ4_XS",
-          "name": "Qwen3.6-35B-A3B-MTP-GGUF:IQ4_XS",
-          "limit": { "context": 262144, "output": 8192 }
+          "id": "Qwen3.8-27B-GGUF:UD-IQ4_XS",
+          "name": "Qwen3.8-27B-GGUF:UD-IQ4_XS",
+          "limit": { "context": 81920, "output": 8192 }
         }
       }
     }

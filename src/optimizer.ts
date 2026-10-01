@@ -17,18 +17,43 @@ import {
 } from "./intermediate";
 import { FunctionCompilationContext } from "./parser";
 
-export function optimize(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): BasicBlock[] {
+export type OptimizationPassName =
+  | "copy_propagation"
+  | "constant_propagation"
+  | "common_subexpression_elimination"
+  | "dead_code_elimination"
+  | "statement_replacement"
+  | "dead_jump_elimination"
+  | "peephole_optimizations";
+
+export const ALL_OPTIMIZATION_PASSES: OptimizationPassName[] = [
+  "copy_propagation",
+  "constant_propagation",
+  "common_subexpression_elimination",
+  "dead_code_elimination",
+  "statement_replacement",
+  "dead_jump_elimination",
+  "peephole_optimizations",
+];
+
+export function optimize(
+  fn_compile_context: FunctionCompilationContext,
+  cfg: BasicBlock[],
+  enabled_passes: OptimizationPassName[] = ALL_OPTIMIZATION_PASSES,
+): BasicBlock[] {
   const constant_cache = new ConstantCache();
+  const on = (name: OptimizationPassName) => enabled_passes.includes(name);
 
   while (true) {
     let changed = false;
-    changed = changed || copy_propagation(fn_compile_context, cfg);
-    changed = changed || constant_propagation(cfg, constant_cache);
-    changed = changed || common_subexpression_elimination(fn_compile_context, cfg);
-    changed = changed || dead_code_elimination(fn_compile_context, cfg);
-    changed = changed || statement_replacement(fn_compile_context, cfg);
-    changed = changed || dead_jump_elimination(fn_compile_context, cfg);
-    changed = changed || peephole_optimizations(fn_compile_context, cfg);
+    if (on("copy_propagation")) changed = changed || copy_propagation(fn_compile_context, cfg);
+    if (on("constant_propagation")) changed = changed || constant_propagation(cfg, constant_cache);
+    if (on("common_subexpression_elimination"))
+      changed = changed || common_subexpression_elimination(fn_compile_context, cfg);
+    if (on("dead_code_elimination")) changed = changed || dead_code_elimination(fn_compile_context, cfg);
+    if (on("statement_replacement")) changed = changed || statement_replacement(fn_compile_context, cfg);
+    if (on("dead_jump_elimination")) changed = changed || dead_jump_elimination(fn_compile_context, cfg);
+    if (on("peephole_optimizations")) changed = changed || peephole_optimizations(fn_compile_context, cfg);
     if (changed == false) break;
   }
 
@@ -97,7 +122,7 @@ export class ConstantCache {
   }
 }
 
-export function constant_propagation(cfg: BasicBlock[], cache: ConstantCache): boolean {
+function constant_propagation(cfg: BasicBlock[], cache: ConstantCache): boolean {
   let changed = false;
 
   for (let i = 0; i < cfg.length; i++) {
@@ -112,7 +137,7 @@ export function constant_propagation(cfg: BasicBlock[], cache: ConstantCache): b
   return changed;
 }
 
-export function statement_replacement(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
+function statement_replacement(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
   let changed = false;
 
   const replace = (old_instruction: IRCode, replacement: IRCode) => {
@@ -195,7 +220,7 @@ export function dead_jump_elimination(fn_compile_context: FunctionCompilationCon
 }
 
 // removes block that don't have a predecessor
-export function enforce_graph_consistency(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]) {
+function enforce_graph_consistency(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]) {
   let changed_within_iteration = true;
   while (changed_within_iteration == true) {
     changed_within_iteration = false;
@@ -248,7 +273,7 @@ export function filter_reachable_units(units: [string, RelocatableUnit][], entry
   return units.filter(([name]) => reachable.has(name));
 }
 
-export function peephole_optimizations(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
+function peephole_optimizations(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
   let changed = false;
 
   for (const block of cfg) {
@@ -277,12 +302,11 @@ function copy_propagation(fn_compile_context: FunctionCompilationContext, cfg: B
   for (const block of cfg) {
     for (const instruction of block.instructions) {
       if (instruction instanceof MoveInstruction) {
-        const target = instruction.target;
-        const source = instruction.source;
+        const { target, source } = instruction;
 
         if (
-          (source.type === "ssa_variable" || source.type === "temp_reg") &&
-          (target.type === "ssa_variable" || target.type === "temp_reg")
+          (source.type === "ssa_variable" && target.type === "ssa_variable") ||
+          (source.type === "temp_reg" && target.type === "temp_reg")
         ) {
           // replace all instances that call target down the line with source
           for (const block of cfg) {
@@ -294,9 +318,6 @@ function copy_propagation(fn_compile_context: FunctionCompilationContext, cfg: B
               }
             }
           }
-
-          fn_compile_context.remove_instruction(instruction);
-          block.remove_instruction(instruction);
         }
       }
     }
@@ -329,6 +350,8 @@ export function common_subexpression_elimination(
               const mov = new MoveInstruction(replacement_candidate.target, instruction.target);
               block.replace_instruction(replacement_candidate, mov);
               fn_compile_context.replace_instruction(replacement_candidate, mov);
+
+              console.log(replacement_candidate, mov);
 
               changed = true;
               continue again;
