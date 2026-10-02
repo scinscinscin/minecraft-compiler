@@ -713,40 +713,39 @@ export class BasicBlock {
   }
 
   remove_instruction(instruction: IRCode) {
-    if (this.instructions.findIndex((x) => x === instruction) === -1) return;
+    const idx = this.instructions.indexOf(instruction);
+    if (idx === -1) return;
 
-    this.instructions = this.instructions.filter((x) => x !== instruction);
+    this.instructions.splice(idx, 1);
     if (instruction instanceof Phi) {
       if (instruction.target.type !== "ssa_variable")
         throw new Error("Invariant: Phi instruction should have ssa_variable as target");
 
       const var_name = instruction.target.name;
-      this.inserted_phi = this.inserted_phi.filter((x) => x !== var_name);
+      const phiIdx = this.inserted_phi.indexOf(var_name);
+      if (phiIdx !== -1) this.inserted_phi.splice(phiIdx, 1);
     }
   }
 
   prepend_instruction(ir: IRCode, to_prepend: IRCode) {
-    // inserts new_instruction before instruction
-    const new_instructions = [] as IRCode[];
-    for (const instruction of this.instructions) {
-      if (instruction === ir) new_instructions.push(to_prepend);
-      new_instructions.push(instruction);
+    const idx = this.instructions.indexOf(ir);
+    if (idx !== -1) {
+      this.instructions.splice(idx, 0, to_prepend);
     }
-    this.instructions = new_instructions;
   }
 
   append_instruction(ir: IRCode, to_append: IRCode) {
-    // inserts new_instruction after instruction
-    const new_instructions = [] as IRCode[];
-    for (const instruction of this.instructions) {
-      new_instructions.push(instruction);
-      if (instruction === ir) new_instructions.push(to_append);
+    const idx = this.instructions.indexOf(ir);
+    if (idx !== -1) {
+      this.instructions.splice(idx + 1, 0, to_append);
     }
-    this.instructions = new_instructions;
   }
 
   replace_instruction(old_instruction: IRCode, replacement: IRCode) {
-    this.instructions = this.instructions.map((x) => (x === old_instruction ? replacement : x));
+    const idx = this.instructions.indexOf(old_instruction);
+    if (idx !== -1) {
+      this.instructions[idx] = replacement;
+    }
   }
 
   successors: BasicBlock[] = [];
@@ -798,6 +797,12 @@ export class BasicBlock {
 }
 
 export function create_basic_blocks(code: IRCode[], leaders: { leader: IRCode; labels: string[] }[]) {
+  // #6: Build leader Map for O(1) lookup
+  const leader_map = new Map<IRCode, { labels: string[] }>();
+  for (const l of leaders) {
+    leader_map.set(l.leader, { labels: l.labels });
+  }
+
   const basic_blocks = [] as BasicBlock[];
 
   let current_block: BasicBlock | null = null;
@@ -809,12 +814,12 @@ export function create_basic_blocks(code: IRCode[], leaders: { leader: IRCode; l
   };
 
   for (const line of code) {
-    const leader = leaders.find((x) => x.leader === line);
-    const is_leader = leader != null;
+    const leader_info = leader_map.get(line);
+    const is_leader = leader_info != null;
 
     if (is_leader) {
       finalize_current_block();
-      current_block = new BasicBlock(leader.labels);
+      current_block = new BasicBlock(leader_info!.labels);
       current_block.add_instruction(line);
       continue;
     }
@@ -832,34 +837,49 @@ export function create_cfg(code: IRCode[]) {
   const leaders = determine_leaders(code);
   const basic_blocks = create_basic_blocks(code, leaders);
 
+  // #6: Build maps for O(1) lookups
+  const label_to_block = new Map<string, BasicBlock>();
+  const instruction_to_block = new Map<IRCode, BasicBlock>();
+  const leader_set = new Set<IRCode>(leaders.map((l) => l.leader));
+
+  for (const block of basic_blocks) {
+    for (const label of block.labels) {
+      label_to_block.set(label, block);
+    }
+    for (const instr of block.instructions) {
+      instruction_to_block.set(instr, block);
+    }
+    if (block.instructions.length > 0) {
+      instruction_to_block.set(block.instructions[0], block);
+    }
+  }
+
   const get_next_blocks = (block: BasicBlock): BasicBlock[] => {
     const ret = [] as BasicBlock[];
 
     // iterate through code starting from leader_index;
     const leader = block.instructions[0];
-    outer: for (let i = code.indexOf(leader); i < code.length; i++) {
+    const start_idx = code.indexOf(leader);
+    outer: for (let i = start_idx; i < code.length; i++) {
       const line = code[i];
 
-      // line can be undefined, need to handle that
       if (line != undefined) {
         if (line instanceof JumpInstruction || line instanceof ConditionalJump) {
-          // Find the next block with the label and add it to ret
-          ret.push(basic_blocks.find((x) => x.labels.includes(line.label))!);
+          // Find the next block with the label (O(1) lookup)
+          const target_block = label_to_block.get(line.label);
+          if (target_block) ret.push(target_block);
           if (line instanceof JumpInstruction) break outer;
         }
 
         if (line instanceof ConditionalJump) {
           // Since its conditional, there's another path that the code can go
-          // Starting from i + 1, increment until we find an instruction that is a leader
-
           inner: for (let j = i + 1; j < code.length; j++) {
-            const line = code[j];
-            const potential_leader = leaders.find((x) => x.leader === line);
-            if (potential_leader == null) continue inner;
+            const next_line = code[j];
+            if (!next_line) continue inner;
+            if (!leader_set.has(next_line)) continue inner;
 
-            // found something, get the basic block
-            const block = basic_blocks.find((x) => x.instructions[0] === line)!;
-            ret.push(block);
+            const block = instruction_to_block.get(next_line);
+            if (block) ret.push(block);
             break inner;
           }
 
@@ -868,10 +888,9 @@ export function create_cfg(code: IRCode[]) {
 
         if (line !== leader) {
           // Check if line is a leader
-          const potential_leader = leaders.find((x) => x.leader === line);
-          if (potential_leader != null) {
-            const block = basic_blocks.find((x) => x.instructions[0] === line)!;
-            ret.push(block);
+          if (leader_set.has(line)) {
+            const block = instruction_to_block.get(line);
+            if (block) ret.push(block);
             break outer;
           }
         }
@@ -882,10 +901,11 @@ export function create_cfg(code: IRCode[]) {
   };
 
   // Wire up the basic blocks based on the jumps on the code
-  // prettier-ignore
-  for (const block of basic_blocks) 
-    for (const next_block of get_next_blocks(block)) 
+  for (const block of basic_blocks) {
+    for (const next_block of get_next_blocks(block)) {
       block.add_next_block(next_block);
+    }
+  }
 
   return basic_blocks;
 }
@@ -1243,22 +1263,21 @@ export class RegisterInterferenceGraph {
 
   last_defined = -1;
   list: Operand[] = [];
-  _index_of(operand: Operand) {
-    for (let i = 0; i < this.list.length; i++) {
-      if (compare_operands(this.list[i], operand)) return i;
-    }
+  // #10: Map-based lookup for O(1) operand indexing
+  private _operand_index = new Map<string, number>();
 
-    return -1;
+  _index_of(operand: Operand) {
+    const key = JSON.stringify(operand);
+    return this._operand_index.get(key) ?? -1;
   }
 
   get_index_of_operand(operand: Operand) {
-    // get the index from list
     const index = this._index_of(operand);
     if (index !== -1) return index;
 
-    // define next
     const next = ++this.last_defined;
     this.list[next] = operand;
+    this._operand_index.set(JSON.stringify(operand), next);
 
     this.adj_list[next] = [];
     return next;

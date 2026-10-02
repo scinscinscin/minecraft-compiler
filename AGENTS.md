@@ -1,10 +1,10 @@
 # Dust Compiler - Agent Instructions
 
+This project implements a compiler for Dust, a C-like language targetting a Minecraft Redstone Computer. 
+
 ## Commands
 - `npm run tc` - TypeScript typecheck (strict mode)
-- `npm start` - Run compiler (reads `examples/scratch.txt`, uses 2 GPRs)
-- `npm test` - Run all tests (30s timeout per test)
-- `npm run test:watch` - Vitest watch mode
+- `npm start` - Run compiler (reads `examples/scratch.txt`)
 
 ## Architecture
 Single-pass compiler pipeline (all in `src/`):
@@ -21,13 +21,11 @@ lexer (src/lexer.ts - Slex)
                    → VM (src/vm.ts)
 ```
 
-## Gotchas
-- `src/index.ts:15` hardcodes `GPR_COUNT = 2`. Change this to adjust register allocation pressure.
-- Entry point reads `examples/scratch.txt`. Edit that file or modify `EXAMPLE_FILE` in `src/index.ts`.
-- `filter_reachable_units` in `src/index.ts` finds `"main"` by name - don't rename the entry function without updating this.
-- Do-while loops can produce CFG blocks with no successors - guards exist in `create_cfg` and `dfs`.
-- `dead_jump_elimination` in `src/optimizer.ts` handles the case where an if has no else branch (no `_false` block exists).
-- Type checking is opt-in per expression node - some paths still use raw int types.
+## Custom libraries
+
+This project uses `@scinorandex/slex` for lexing and `@scinorandex/sparse` for parsing.
+
+You can view their documentation in `docs/slex-documentation.md` and `docs/sparse-documentation.md` respectively. Do not traverse the node_modules directory and read their source code. Assume that these docs are accurate and up-to-date.
 
 ## Adding Language Features
 1. Add token to `src/lexer.ts` TokenType enum and `lexerGenerator.addRule()`
@@ -44,3 +42,15 @@ lexer (src/lexer.ts - Slex)
 
 ## Conventions
  - use snake case
+ - put all documentation in the docs/ directory
+
+<!-- CODEGRAPH_START -->
+## CodeGraph
+
+In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+
+- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
+- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+
+If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
+<!-- CODEGRAPH_END -->

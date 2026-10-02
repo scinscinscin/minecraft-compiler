@@ -102,31 +102,23 @@ export class FunctionCompilationContext {
   }
 
   remove_instruction(ir_code: IRCode) {
-    this.emitted = this.emitted.filter((x) => x !== ir_code);
+    const idx = this.emitted.indexOf(ir_code);
+    if (idx !== -1) this.emitted.splice(idx, 1);
   }
 
   replace_instruction(old_instruction: IRCode, replacement: IRCode) {
-    this.emitted = this.emitted.map((x) => (x === old_instruction ? replacement : x));
+    const idx = this.emitted.indexOf(old_instruction);
+    if (idx !== -1) this.emitted[idx] = replacement;
   }
 
   prepend_instruction(instruction: IRCode, new_instruction: IRCode) {
-    // inserts new_instruction before instruction
-    const new_emitted = [] as IRCode[];
-    for (const ir of this.emitted) {
-      if (ir === instruction) new_emitted.push(new_instruction);
-      new_emitted.push(ir);
-    }
-    this.emitted = new_emitted;
+    const idx = this.emitted.indexOf(instruction);
+    if (idx !== -1) this.emitted.splice(idx, 0, new_instruction);
   }
 
   append_instruction(instruction: IRCode, new_instruction: IRCode) {
-    // inserts new_instruction after instruction
-    const new_emitted = [] as IRCode[];
-    for (const ir of this.emitted) {
-      new_emitted.push(ir);
-      if (ir === instruction) new_emitted.push(new_instruction);
-    }
-    this.emitted = new_emitted;
+    const idx = this.emitted.indexOf(instruction);
+    if (idx !== -1) this.emitted.splice(idx + 1, 0, new_instruction);
   }
 
   used_regsiter_spills = 0;
