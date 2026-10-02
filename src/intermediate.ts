@@ -911,7 +911,12 @@ export function create_cfg(code: IRCode[]) {
 }
 
 export function determine_dominators(basic_blocks: BasicBlock[]) {
-  // Initialize dominator array
+  // Precompute predecessors once (O(n^2) total)
+  const predecessors = basic_blocks.map((block) =>
+    basic_blocks.filter((x) => x.successors.includes(block)),
+  );
+
+  // Initialize dominator arrays
   const dominators = [[0]] as number[][];
   for (let i = 1; i < basic_blocks.length; i++) {
     const line = [] as number[];
@@ -919,26 +924,24 @@ export function determine_dominators(basic_blocks: BasicBlock[]) {
     dominators.push(line);
   }
 
-  function get_predecessors(block: BasicBlock) {
-    return basic_blocks.filter((x) => x.successors.includes(block));
-  }
-
   while (true) {
     let changed = false;
 
-    // iterate through each block and calculate new dom
     for (let i = 0; i < basic_blocks.length; i++) {
-      const current_block = basic_blocks[i];
-      const predecessors = get_predecessors(current_block);
+      const preds = predecessors[i];
 
-      // get the intersection of the dominators of the predecessors
-      const individual_dominators = predecessors.map((x) => dominators[basic_blocks.indexOf(x)]);
-      const intersection = array_intersection(individual_dominators);
+      // Set-based intersection of predecessor dominators
+      let intersection: number[];
+      if (preds.length === 0) {
+        intersection = [i];
+      } else {
+        const pred_dom_sets = preds.map((x) => new Set(dominators[basic_blocks.indexOf(x)]));
+        intersection = dominators[basic_blocks.indexOf(preds[0])].filter((x) =>
+          pred_dom_sets.every((s) => s.has(x)),
+        );
+        if (!intersection.includes(i)) intersection.push(i);
+      }
 
-      // add i if not present in intersection
-      if (!intersection.includes(i)) intersection.push(i);
-
-      // intersection is the new dominator for the current node
       if (array_equivalent(dominators[i], intersection) === false) {
         dominators[i] = intersection;
         changed = true;
@@ -946,21 +949,9 @@ export function determine_dominators(basic_blocks: BasicBlock[]) {
     }
 
     if (changed === false) break;
-    else continue;
   }
 
   return dominators;
-}
-
-function array_intersection(arrays: number[][]) {
-  if (arrays.length === 0) return [];
-
-  const intersection = [] as number[];
-  for (let i = 0; i < arrays[0].length; i++) {
-    const element = arrays[0][i];
-    if (arrays.every((x) => x.includes(element))) intersection.push(element);
-  }
-  return intersection;
 }
 
 function array_equivalent(a: number[], b: number[]) {
@@ -975,29 +966,35 @@ export function determine_frontier(basic_blocks: BasicBlock[]) {
   const dominators = determine_dominators(basic_blocks);
   const frontier = [] as number[][];
 
-  function get_predecessors(block: BasicBlock) {
-    return basic_blocks.filter((x) => x.successors.includes(block));
-  }
+  // Precompute predecessors once
+  const predecessors = basic_blocks.map((block) =>
+    basic_blocks.filter((x) => x.successors.includes(block)),
+  );
 
   // determine the frontier for each node
   for (let i = 0; i < basic_blocks.length; i++) {
-    // get the index of nodes that the current node dominates
+    // get the index of nodes that dominate block i
     const dominating = dominators
-      .map((x, i) => [x, i] as [number[], number])
-      .filter(([x]) => x.includes(i))
-      .map((x) => x[1]);
+      .map((dom, idx) => (dom.includes(i) ? idx : -1))
+      .filter((idx) => idx !== -1);
+    const dominating_set = new Set(dominating);
 
     let frontier_x = [] as number[];
 
     for (let j = 0; j < basic_blocks.length; j++) {
-      const y = basic_blocks[j];
-      const predecessors = get_predecessors(y).map((x) => basic_blocks.indexOf(x));
-      // check if x dominates at least one predecessor of y
-      const b = dominating.some((x) => predecessors.includes(x));
+      // Check if any predecessor of j is in dominating but j is not strictly dominated
+      const block_predecessors = predecessors[j];
+      let has_non_strict_pred = false;
+      for (const pred of block_predecessors) {
+        const pred_idx = basic_blocks.indexOf(pred);
+        if (dominating_set.has(pred_idx)) {
+          has_non_strict_pred = true;
+          break;
+        }
+      }
 
-      if (b) {
-        const strict_domination = dominating.includes(j);
-        if (!strict_domination) frontier_x.push(j);
+      if (has_non_strict_pred && !dominating_set.has(j)) {
+        frontier_x.push(j);
       }
     }
 
@@ -1021,10 +1018,29 @@ export function to_ssa(context: FunctionCompilationContext) {
   while (dead_jump_elimination(context, cfg));
   const [dominators, frontier] = determine_frontier(cfg);
 
+  // Precompute block index map for O(1) lookup
+  const block_index_map = new Map<BasicBlock, number>();
+  for (let i = 0; i < cfg.length; i++) {
+    block_index_map.set(cfg[i], i);
+  }
+
   function idom(index: number) {
     const line = dominators[index];
     const idom_index = line[line.length - 2];
     return cfg[idom_index];
+  }
+
+  // Precompute redefining blocks for each variable once (before the fixed point loop)
+  const redefining_blocks_for_var = new Map<string, number[]>();
+  for (const variable of variables) {
+    const redefining_indices: number[] = [];
+    for (let i = 0; i < cfg.length; i++) {
+      const block = cfg[i];
+      if (block.instructions.some((x) => x.check_if_redefines_variable(variable))) {
+        redefining_indices.push(i);
+      }
+    }
+    redefining_blocks_for_var.set(variable, redefining_indices);
   }
 
   // Place the phi nodes
@@ -1034,17 +1050,15 @@ export function to_ssa(context: FunctionCompilationContext) {
     // For each variable run a fixed point iteration to add phi nodes
     // Stop when the computed frontier is the same as the previous frontier
     inner: while (true) {
-      const redefining_blocks = cfg.filter((block) =>
-        block.instructions.some((x) => x.check_if_redefines_variable(variable)),
-      );
-      const redefining_blocks_indices = redefining_blocks.map((x) => cfg.indexOf(x));
+      const redefining_blocks_indices = redefining_blocks_for_var.get(variable)!;
       const combined_frontier = redefining_blocks_indices.flatMap((x) => frontier[x]);
 
       if (array_equals(combined_frontier, variables_frontier[variable])) break inner; // they are the same, stop
 
       // need to add phi nodes to the new indices added to combined_frontier
       // get nodes in frontier that don't define variable x
-      const diff = combined_frontier.filter((x) => !redefining_blocks_indices.includes(x));
+      const redefining_set = new Set(redefining_blocks_indices);
+      const diff = combined_frontier.filter((x) => !redefining_set.has(x));
       for (const block_index of diff) cfg[block_index].insert_phi(variable);
 
       variables_frontier[variable] = combined_frontier;
@@ -1101,7 +1115,57 @@ function array_equals(a: number[], b: number[]) {
   return true;
 }
 
-type OperandSet = Operand[];
+type OperandSet = Set<Operand>;
+
+function operand_set_key(op: Operand): string {
+  return stringify_operand(op);
+}
+
+function create_operand_set(operands: Operand[]): OperandSet {
+  const s = new Set<Operand>();
+  for (const op of operands) s.add(op);
+  return s;
+}
+
+function set_union(a: OperandSet, b: OperandSet): OperandSet {
+  const result = new Set<Operand>(a);
+  for (const op of b) result.add(op);
+  return result;
+}
+
+function set_minus(set: OperandSet, defs: Operand[]): OperandSet {
+  const result = new Set<Operand>();
+  for (const op of set) {
+    let removed = false;
+    for (const d of defs) {
+      if (compare_operands(op, d)) { removed = true; break; }
+    }
+    if (!removed) result.add(op);
+  }
+  return result;
+}
+
+function sets_equal(a: OperandSet, b: OperandSet): boolean {
+  if (a.size !== b.size) return false;
+  for (const op of a) {
+    let found = false;
+    for (const ob of b) {
+      if (compare_operands(op, ob)) { found = true; break; }
+    }
+    if (!found) return false;
+  }
+  return true;
+}
+
+function combine_operand_sets_n(sets: OperandSet[]): OperandSet {
+  if (sets.length === 0) return new Set<Operand>();
+  const result = new Set<Operand>(sets[0]);
+  for (let i = 1; i < sets.length; i++) {
+    for (const op of sets[i]) result.add(op);
+  }
+  return result;
+}
+
 export function liveliness_analysis(cfg: BasicBlock[]) {
   // Need to compute USE and DEF per block
   // Def - variables defined in B
@@ -1109,18 +1173,20 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
   const use_def: { use: OperandSet; def: OperandSet }[] = [];
   for (let i = 0; i < cfg.length; i++) {
     const block = cfg[i];
-    const def: OperandSet = [];
-    const use: OperandSet = [];
+    const def = new Set<Operand>();
+    const use = new Set<Operand>();
 
     for (const instruction of block.instructions) {
-      // check if the instruction defines a variable
       const defined = instruction.get_outputs();
       const inputs = instruction.get_inputs();
 
       // add inputs to use if not present in def
       for (const input of inputs) {
-        if (input.type !== "literal" && input.type !== "variable_spill" && input.type !== "register_spill")
-          if (!def.some((x) => compare_operands(x, input))) use.push(input);
+        if (input.type !== "literal" && input.type !== "variable_spill" && input.type !== "register_spill") {
+          let present = false;
+          for (const d of def) { if (compare_operands(d, input)) { present = true; break; } }
+          if (!present) use.add(input);
+        }
       }
 
       // add defined to def if not present
@@ -1130,81 +1196,90 @@ export function liveliness_analysis(cfg: BasicBlock[]) {
           defined_variable.type !== "variable_spill" &&
           defined_variable.type !== "register_spill"
         )
-          if (!def.some((x) => compare_operands(x, defined_variable))) def.push(defined_variable);
+          if (!def.has(defined_variable)) def.add(defined_variable);
     }
 
-    use_def[i] = { use, def };
+    use_def[i] = { use, def: new Set(def) };
   }
 
-  // console.log("Printing use_def for each block");
-  // for (const { use, def, phi_uses } of use_def) console.log(use, def, phi_uses);
-
-  // Run fixed point iteration to determine the live in and live out of each block
+  // Run fixed point iteration using a worklist
   // LIVE_OUT = union of live in of the successors
   // LIVE_IN = USE(B) UNION (LIVE_OUT(B) - DEF(B))
   const LIVE_IN = [] as OperandSet[];
   const LIVE_OUT = [] as OperandSet[];
 
-  for (const block of cfg) {
-    LIVE_IN.push([]);
-    LIVE_OUT.push([]);
+  for (let i = 0; i < cfg.length; i++) {
+    LIVE_IN.push(new Set<Operand>());
+    LIVE_OUT.push(new Set<Operand>());
   }
 
-  while (true) {
-    let changed = false;
+  // Precompute successor indices
+  const successor_indices = cfg.map((block) => block.successors.map((x) => cfg.indexOf(x)));
 
-    const change_live_in = (index: number, live_in: OperandSet) => {
-      const current = LIVE_IN[index];
-      if (are_operand_sets_equal(current, live_in)) return;
-
-      LIVE_IN[index] = live_in;
-      changed = true;
-    };
-
-    const change_live_out = (index: number, live_out: OperandSet) => {
-      const current = LIVE_OUT[index];
-      if (are_operand_sets_equal(current, live_out)) return;
-
-      LIVE_OUT[index] = live_out;
-      changed = true;
-    };
-
-    // Phi operands are handled when computing the contribution of a successor to a predecessor's live out
-    for (let i = 0; i < cfg.length; i++) {
-      const block = cfg[i];
-      const uses = use_def[i].use;
-      const defs = use_def[i].def;
-
-      // LIVE OUT = union of live in of the successors
-      const successor_indices = block.successors.map((x) => cfg.indexOf(x));
-      const live_out = combine_operand_sets_n(successor_indices.map((x) => LIVE_IN[x]));
-
-      for (const next of block.successors) {
-        // if the successor contains phi nodes, add the operand that would be chosen when coming from B
-        for (const instruction of next.instructions) {
-          if (instruction instanceof Phi) {
-            for (let j = 0; j < instruction.sources.length; j++) {
-              const operand = instruction.sources[j];
-              if (instruction.from[j] === block) {
-                if (!live_out.some((x) => compare_operands(x, operand))) {
-                  live_out.push(operand);
-                }
-              }
-            }
-          }
+  // Precompute phi sources: for each block, store phi operand info indexed by predecessor
+  const phi_sources: { sources: Operand[]; from_indices: number[] }[] = [];
+  for (let i = 0; i < cfg.length; i++) {
+    const phi_src: Operand[] = [];
+    const from_indices: number[] = [];
+    for (const instruction of cfg[i].instructions) {
+      if (instruction instanceof Phi) {
+        for (let j = 0; j < instruction.sources.length; j++) {
+          phi_src.push(instruction.sources[j]);
+          from_indices.push(cfg.indexOf(instruction.from[j]));
         }
       }
+    }
+    phi_sources[i] = { sources: phi_src, from_indices };
+  }
 
-      // LIVE IN = USE(B) UNION (LIVE_OUT(B) - DEF(B))
-      const without_defs = live_out.filter((x) => !defs.some((y) => compare_operands(x, y)));
-      const live_in = combine_operand_sets_n([uses, without_defs]);
+  const worklist = Array.from({ length: cfg.length }, (_, i) => i);
 
-      change_live_in(i, live_in);
-      change_live_out(i, live_out);
+  while (worklist.length > 0) {
+    const idx = worklist.pop()!;
+    const block = cfg[idx];
+    const uses = use_def[idx].use;
+    const defs = use_def[idx].def;
+
+    // LIVE OUT = union of live in of the successors
+    const live_out = combine_operand_sets_n(successor_indices[idx].map((x) => LIVE_IN[x]));
+
+    // Add phi operands from successor blocks
+    for (const next of block.successors) {
+      const next_idx = cfg.indexOf(next);
+      const sources = phi_sources[next_idx].sources;
+      const from_idxs = phi_sources[next_idx].from_indices;
+      for (let j = 0; j < sources.length; j++) {
+        if (from_idxs[j] === idx && !live_out.has(sources[j])) {
+          live_out.add(sources[j]);
+        }
+      }
     }
 
-    if (changed == false) break;
-    else continue;
+    // LIVE IN = USE(B) UNION (LIVE_OUT(B) - DEF(B))
+    const without_defs = set_minus(live_out, Array.from(defs));
+    const live_in = set_union(uses, without_defs);
+
+    // Check if LIVE_IN changed
+    if (!sets_equal(LIVE_IN[idx], live_in)) {
+      LIVE_IN[idx] = live_in;
+      // Propagate to predecessors
+      for (let p = 0; p < cfg.length; p++) {
+        if (cfg[p].successors.some((s) => s === block) && worklist.indexOf(p) === -1) {
+          worklist.push(p);
+        }
+      }
+    }
+
+    // Check if LIVE_OUT changed
+    if (!sets_equal(LIVE_OUT[idx], live_out)) {
+      LIVE_OUT[idx] = live_out;
+      // Propagate to current block's predecessors
+      for (let p = 0; p < cfg.length; p++) {
+        if (cfg[p].successors.some((s) => s === block) && worklist.indexOf(p) === -1) {
+          worklist.push(p);
+        }
+      }
+    }
   }
 
   // Construct the register interference graph by traversing each block backwards
@@ -1221,7 +1296,10 @@ export function create_register_inference_graph(cfg: BasicBlock[]) {
 
   for (let i = 0; i < cfg.length; i++) {
     const block = cfg[i];
-    let live = live_out[i].filter((x) => x.type !== "literal");
+    let live: Operand[] = [];
+    for (const op of live_out[i]) {
+      if (op.type !== "literal") live.push(op);
+    }
 
     for (const instruction of block.instructions.toReversed()) {
       // Determine what is defined and what is used in this instruction
@@ -1243,7 +1321,6 @@ export function create_register_inference_graph(cfg: BasicBlock[]) {
       // live -= DEF(instruction)
       // live += USE(instruction)
       for (const defined_variable of defined) {
-        // remove defined variables from live
         live = live.filter((x) => !compare_operands(x, defined_variable));
       }
 
@@ -1341,27 +1418,7 @@ export class RegisterInterferenceGraph {
   }
 }
 
-function combine_operand_sets_n(sets: OperandSet[]) {
-  if (sets.length === 0) return [];
 
-  const [first, ...rest] = sets;
-  const ret = [...first] as OperandSet;
-
-  for (const set of rest) {
-    for (const operand of set) {
-      const has_operand = ret.some((x) => compare_operands(x, operand));
-      if (!has_operand) ret.push(operand);
-    }
-  }
-
-  return ret;
-}
-
-function are_operand_sets_equal(a: OperandSet, b: OperandSet) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (!compare_operands(a[i], b[i])) return false;
-  return true;
-}
 
 export function constraint_registers(cfg: BasicBlock[], context: FunctionCompilationContext, register_count: number) {
   // Fix CFG so that operations inside it can be performed with only a certain number of registers

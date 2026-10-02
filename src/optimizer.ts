@@ -13,6 +13,7 @@ import {
   MoveInstruction,
   Operand,
   Phi,
+  stringify_operand,
   UnaryInstruction,
 } from "./intermediate";
 import { FunctionCompilationContext } from "./parser";
@@ -66,7 +67,11 @@ function dead_code_elimination(fn_compile_context: FunctionCompilationContext, c
 
   for (let i = 0; i < cfg.length; i++) {
     const block = cfg[i];
-    let live = live_out[i].filter((x) => x.type !== "literal");
+    // Convert Set to array for mutable tracking
+    let live: Operand[] = [];
+    for (const op of live_out[i]) {
+      if (op.type !== "literal") live.push(op);
+    }
     let candidates = [] as IRCode[];
 
     for (const instruction of block.instructions.toReversed()) {
@@ -295,30 +300,37 @@ function peephole_optimizations(fn_compile_context: FunctionCompilationContext, 
 /**
  * Copy propagation: track operand equivalences and replace uses with their canonical values.
  * Works on both the emitted IR and the CFG blocks (for phi operand substitution).
+ * Optimized: for each move, only scans instructions after it in program order.
  */
 function copy_propagation(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
   let changed = false;
 
+  // Flatten all instructions in program order with block reference
+  const all_instructions: { block: BasicBlock; instr: IRCode }[] = [];
   for (const block of cfg) {
-    for (const instruction of block.instructions) {
-      if (instruction instanceof MoveInstruction) {
-        const { target, source } = instruction;
+    for (const instr of block.instructions) {
+      all_instructions.push({ block, instr });
+    }
+  }
 
-        if (
-          (source.type === "ssa_variable" && target.type === "ssa_variable") ||
-          (source.type === "temp_reg" && target.type === "temp_reg")
-        ) {
-          // replace all instances that call target down the line with source
-          for (const block of cfg) {
-            for (const instr of block.instructions) {
-              const inputs = instr.get_inputs();
-              if (inputs.some((x) => compare_operands(x, target))) {
-                instr.replace_operands(target, source);
-                changed = true;
-              }
-            }
-          }
-        }
+  // For each move, only scan instructions after it in program order
+  for (let i = 0; i < all_instructions.length; i++) {
+    const { block, instr } = all_instructions[i];
+    if (!(instr instanceof MoveInstruction)) continue;
+
+    const { target, source } = instr;
+    if (
+      !((source.type === "ssa_variable" && target.type === "ssa_variable") ||
+        (source.type === "temp_reg" && target.type === "temp_reg"))
+    ) continue;
+
+    // Scan forward from position i+1
+    for (let j = i + 1; j < all_instructions.length; j++) {
+      const { instr: other } = all_instructions[j];
+      const inputs = other.get_inputs();
+      if (inputs.some((x) => compare_operands(x, target))) {
+        other.replace_operands(target, source);
+        changed = true;
       }
     }
   }
@@ -332,32 +344,38 @@ export function common_subexpression_elimination(
 ): boolean {
   let changed = false;
 
-  again: for (const block of cfg) {
+  // Map-based CSE: signature → { instr, target } of first occurrence
+  const seen = new Map<string, { instr: BinaryInstruction | UnaryInstruction; target: Operand }>();
+
+  for (const block of cfg) {
     for (const instruction of block.instructions) {
-      if (instruction instanceof BinaryInstruction || instruction instanceof UnaryInstruction) {
-        // check all subsequent if they are equivalent
-
-        const idx = fn_compile_context.emitted.indexOf(instruction);
-        for (let i = idx + 1; i < fn_compile_context.emitted.length; i++) {
-          const replacement_candidate = fn_compile_context.emitted[i];
-
-          if (
-            (instruction instanceof BinaryInstruction && replacement_candidate instanceof BinaryInstruction) ||
-            (instruction instanceof UnaryInstruction && replacement_candidate instanceof UnaryInstruction)
-          ) {
-            // @ts-ignore
-            if (instruction.is_equivalent_to(replacement_candidate)) {
-              const mov = new MoveInstruction(replacement_candidate.target, instruction.target);
-              block.replace_instruction(replacement_candidate, mov);
-              fn_compile_context.replace_instruction(replacement_candidate, mov);
-
-              console.log(replacement_candidate, mov);
-
-              changed = true;
-              continue again;
-            }
+      if (!(instruction instanceof BinaryInstruction && instruction instanceof BinaryInstruction)) {
+        // Handle UnaryInstruction separately
+        if (instruction instanceof UnaryInstruction) {
+          const sig = `${TokenType[instruction.op]}:${stringify_operand(instruction.left)}`;
+          const entry = seen.get(sig);
+          if (entry) {
+            const mov = new MoveInstruction(instruction.target, entry.target);
+            block.replace_instruction(instruction, mov);
+            fn_compile_context.replace_instruction(instruction, mov);
+            changed = true;
+          } else {
+            seen.set(sig, { instr: instruction as any, target: instruction.target });
           }
         }
+        continue;
+      }
+
+      const bin = instruction as BinaryInstruction;
+      const sig = `${TokenType[bin.op]}:${stringify_operand(bin.left)}:${stringify_operand(bin.right)}`;
+      const entry = seen.get(sig);
+      if (entry) {
+        const mov = new MoveInstruction(bin.target, entry.target);
+        block.replace_instruction(bin, mov);
+        fn_compile_context.replace_instruction(bin, mov);
+        changed = true;
+      } else {
+        seen.set(sig, { instr: bin, target: bin.target });
       }
     }
   }
