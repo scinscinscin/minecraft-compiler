@@ -16,7 +16,7 @@
   "type": "commonjs",
   "dependencies": {
     "@scinorandex/slex": "^0.0.4",
-    "@scinorandex/sparse": "^0.0.8"
+    "@scinorandex/sparse": "^0.1.1"
   },
   "devDependencies": {
     "@types/node": "^26.6.1",

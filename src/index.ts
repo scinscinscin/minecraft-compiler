@@ -16,6 +16,8 @@ const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
 const GPR_COUNT = 7;
 
 async function main() {
+  const now = Date.now();
+
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));
   const parserGenerator = Sparse.fromProductions<TokenType, TokenMetadata, BaseNode>({
     productions,
@@ -73,6 +75,10 @@ async function main() {
   });
 
   const linked = load(filter_reachable_units(units, "main"), globals);
+
+  const ms = Date.now() - now;
+  console.log(`Binary compilation took ${ms.toFixed(1)}ms`);
+
   console.log("Printing linked code: ================");
   for (let i = 0; i < linked.length; i++) {
     const instruction = linked[i];

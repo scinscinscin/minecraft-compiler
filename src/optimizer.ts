@@ -351,8 +351,6 @@ export function common_subexpression_elimination(
               block.replace_instruction(replacement_candidate, mov);
               fn_compile_context.replace_instruction(replacement_candidate, mov);
 
-              console.log(replacement_candidate, mov);
-
               changed = true;
               continue again;
             }
