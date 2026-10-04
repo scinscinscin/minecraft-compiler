@@ -1,4 +1,3 @@
-import { pretty_print } from ".";
 import { RelocatableUnit } from "./compiler";
 import { TokenType } from "./lexer";
 import {

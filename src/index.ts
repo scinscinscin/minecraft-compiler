@@ -1,9 +1,10 @@
+#!/usr/bin/env node
 import fs from "fs/promises";
 import path from "path";
 import { lexerGenerator, TokenMetadata, TokenType, toStringifiedTokenType } from "./lexer";
 import { buildProductions, LR1ParserGraveError, Sparse } from "@scinorandex/sparse";
 import { BaseNode, Program, Reducers } from "./parser";
-import { BasicBlock, to_ssa } from "./intermediate";
+import { to_ssa } from "./intermediate";
 import { compile, RelocatableUnit } from "./compiler";
 import { load } from "./linker";
 import { create_runner } from "./vm";
@@ -46,7 +47,7 @@ async function main() {
   const parsing_result = parse();
   if (parsing_result.success === false) {
     const { currentToken: token, reason } = parsing_result.err;
-    return print_diagnostic(EXAMPLE_FILE, source_code, token.line, token.column, reason);
+    return print_diagnostic(EXAMPLE_FILE, source_code, token!.line, token!.column, reason);
   }
 
   const root_node = parsing_result.result as Program | null;
@@ -88,11 +89,12 @@ async function main() {
   start_repl(create_runner(linked));
 }
 
-export function pretty_print(x: BasicBlock[]) {
-  console.log("================================");
-  for (const b of x) {
-    console.log(b.instructions.map((i) => i.to_stringified()));
-  }
+// Only drive the pipeline when this file is the process entrypoint. Library
+// consumers import the individual pipeline stages directly, and must not have
+// a REPL opened on their stdin as a side effect of doing so.
+if (require.main === module) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
 }
-
-main();

@@ -59,7 +59,7 @@ lexerGenerator.addRule("rparen", "$)", TokenType.RPAREN);
 lexerGenerator.addRule("lbrace", "${", TokenType.LBRACE);
 lexerGenerator.addRule("rbrace", "$}", TokenType.RBRACE);
 
-lexerGenerator.addRule("identifier", "(${alphabet}|$_)*(${alphabet}|${digit}|$_)*", TokenType.IDENTIFIER);
+lexerGenerator.addRule("identifier", "(${alphabet}|$_)(${alphabet}|${digit}|$_)*", TokenType.IDENTIFIER);
 lexerGenerator.addRule("function", "function", TokenType.FUNCTION);
 lexerGenerator.addRule("var", "var", TokenType.VAR);
 lexerGenerator.addRule("while", "while", TokenType.WHILE);

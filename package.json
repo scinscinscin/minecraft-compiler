@@ -4,19 +4,27 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "build": "tsc --project tsconfig.build.json",
     "tc": "tsc --noEmit --project tsconfig.build.json",
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
-  "keywords": [],
+  "keywords": [
+    "compiler",
+    "dust",
+    "redstone",
+    "minecraft",
+    "ssa",
+    "register-allocation"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@scinorandex/slex": "^0.0.4",
-    "@scinorandex/sparse": "^0.1.1"
+    "@scinorandex/slex": "^0.1.2",
+    "@scinorandex/sparse": "^0.1.2"
   },
   "devDependencies": {
     "@types/node": "^26.6.1",
