@@ -1,0 +1,18 @@
+function main(): int {
+  var a: int = unused();
+  var b: int = 3;
+  
+  var c: int = 0;
+  
+  for loop (var i: int = 0; i < 10; i = i + 1) {
+    var d: int = a + b;
+    c = c + d;
+  }
+
+  return c;
+}
+
+function unused(): int{
+  var x: int = 42;
+  return x;
+}
