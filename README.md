@@ -72,6 +72,7 @@ The Virtual Machine allows you to
    - [x] - Remove unused functions from being linked
    - [x] - Remove unused blocks that never get jumped into
    - [x] - Remove arithmetic identity operations
+   - [ ] - Implement loop invariant code motion
  - [x] - Type checking and static analysis
    - [x] - Ensure variable and function usage is correct
    - [x] - Ensure valid goto labels are used

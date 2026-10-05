@@ -13,7 +13,7 @@ import { filter_reachable_units, optimize } from "./optimizer";
 import { print_diagnostic, StaticAnalysisContext } from "./typechecker";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./examples/scratch.txt");
+const EXAMPLE_FILE = path.join(process.cwd(), "./examples/licm.txt");
 const GPR_COUNT = 7;
 
 async function main() {
@@ -67,10 +67,10 @@ async function main() {
   const functions = root_node.definitions.functions.get_items_reversed();
   const units = functions.map((fn) => {
     const intermediate_representation = fn.compile(globals.map((x) => x.name.lexeme));
-    console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
 
     let cfg = to_ssa(intermediate_representation);
     cfg = optimize(intermediate_representation, cfg);
+    console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
     const compiled = compile(intermediate_representation, cfg, GPR_COUNT);
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
   });
