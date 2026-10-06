@@ -13,7 +13,12 @@ export class Environment {
   stack_pointer = 0;
   base_pointer = 0;
   return_register = 0;
-  gpr = [0, 0, 0, 0, 0, 0, 0];
+  gpr: number[];
+
+  constructor(gpr_count: number) {
+    this.gpr = [];
+    for (let i = 0; i < gpr_count; i++) this.gpr.push(0);
+  }
 
   memory = init_memory(256);
 
@@ -67,8 +72,13 @@ export class Environment {
 }
 
 export class Runner {
-  environment = new Environment();
-  constructor(public readonly instructions: LinkedInstruction[]) {}
+  environment: Environment;
+  constructor(
+    public readonly instructions: LinkedInstruction[],
+    gpr_count: number = 7,
+  ) {
+    this.environment = new Environment(gpr_count);
+  }
 
   dump_registers(logger: Logger) {
     logger.log(`GPR: [${this.environment.gpr.join(", ")}]`);
@@ -125,6 +135,6 @@ export class Runner {
   }
 }
 
-export function create_runner(instructions: LinkedInstruction[]) {
-  return new Runner(instructions);
+export function create_runner(instructions: LinkedInstruction[], gpr_count: number = 7) {
+  return new Runner(instructions, gpr_count);
 }

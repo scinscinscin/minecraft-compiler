@@ -8,15 +8,60 @@ import { to_ssa } from "./intermediate";
 import { compile, RelocatableUnit } from "./compiler";
 import { load } from "./linker";
 import { create_runner } from "./vm";
-import { start_repl } from "./repl";
+import { Logger, start_repl } from "./repl";
 import { filter_reachable_units, optimize } from "./optimizer";
 import { print_diagnostic, StaticAnalysisContext } from "./typechecker";
+import { Command } from "./utils/command";
 
 const GRAMMAR_FILE = path.join(process.cwd(), "./src/grammar.txt");
-const EXAMPLE_FILE = path.join(process.cwd(), "./examples/licm.txt");
-const GPR_COUNT = 7;
+const DEFAULT_INPUT_FILE = path.join(process.cwd(), "./examples/scratch.txt");
+const DEFAULT_GPR_COUNT = 7;
 
-async function main() {
+type CliOptions = {
+  debug: boolean;
+  gpr: number;
+  no_optimizations: boolean;
+};
+
+const root = new Command<string[], CliOptions>({
+  name: "dust",
+  description: "Compiles a Dust source file and runs the resulting binary.",
+  arguments: {
+    name: "input",
+    description: `Path to the Dust source file to compile (defaults to ${DEFAULT_INPUT_FILE})`,
+  },
+  options: {
+    debug: {
+      aliases: ["--debug"],
+      description: "Run as an interactive REPL with step-by-step execution",
+      type: "boolean",
+      optional: true,
+      default: false,
+    },
+    gpr: {
+      aliases: ["--gpr"],
+      description: `Set the number of general purpose registers, between 2 and 7 (defaults to ${DEFAULT_GPR_COUNT})`,
+      type: "number",
+      optional: true,
+      min: 2,
+      max: 7,
+      default: DEFAULT_GPR_COUNT,
+    },
+    no_optimizations: {
+      aliases: ["--no-optimizations"],
+      description: "Disable optimization passes",
+      type: "boolean",
+      optional: true,
+      default: false,
+    },
+  },
+});
+
+root.setHandler((args, options) => {
+  return main(args[0] ?? DEFAULT_INPUT_FILE, options.gpr, options.debug, !options.no_optimizations);
+});
+
+async function main(input_file: string, gpr_count: number, debug: boolean, optimized: boolean) {
   const now = Date.now();
 
   const productions = buildProductions(await fs.readFile(GRAMMAR_FILE, "utf8"));
@@ -25,7 +70,7 @@ async function main() {
     toStringifiedTokenType,
   });
 
-  const source_code = await fs.readFile(EXAMPLE_FILE, "utf8");
+  const source_code = await fs.readFile(input_file, "utf8");
   const lexer = lexerGenerator.generate(source_code, () => ({}));
   const parser = parserGenerator.generate(lexer, {
     reducer: ({ bag, name }) => {
@@ -47,7 +92,7 @@ async function main() {
   const parsing_result = parse();
   if (parsing_result.success === false) {
     const { currentToken: token, reason } = parsing_result.err;
-    return print_diagnostic(EXAMPLE_FILE, source_code, token!.line, token!.column, reason);
+    return print_diagnostic(input_file, source_code, token!.line, token!.column, reason);
   }
 
   const root_node = parsing_result.result as Program | null;
@@ -58,7 +103,7 @@ async function main() {
   root_node.verify_static_analysis(static_context);
   if (static_context.errors.length > 0) {
     for (const error of static_context.errors)
-      print_diagnostic(EXAMPLE_FILE, source_code, error.token.line, error.token.column, error.message);
+      print_diagnostic(input_file, source_code, error.token.line, error.token.column, error.message);
     return;
   }
 
@@ -69,9 +114,10 @@ async function main() {
     const intermediate_representation = fn.compile(globals.map((x) => x.name.lexeme));
 
     let cfg = to_ssa(intermediate_representation);
-    cfg = optimize(intermediate_representation, cfg);
+    if (optimized) cfg = optimize(intermediate_representation, cfg);
+
     console.log(intermediate_representation.emitted.map((x) => x.to_stringified()));
-    const compiled = compile(intermediate_representation, cfg, GPR_COUNT);
+    const compiled = compile(intermediate_representation, cfg, gpr_count);
     return [fn.name.lexeme, compiled] as [string, RelocatableUnit];
   });
 
@@ -79,21 +125,25 @@ async function main() {
 
   const ms = Date.now() - now;
   console.log(`Binary compilation took ${ms.toFixed(1)}ms`);
-
   console.log("Printing linked code: ================");
   for (let i = 0; i < linked.length; i++) {
     const instruction = linked[i];
     console.log(`[${i.toString().padStart(2, "0")}]: ${instruction.to_stringified()}`);
   }
 
-  start_repl(create_runner(linked));
+  const runner = create_runner(linked, gpr_count);
+  if (!debug) {
+    const logger = new Logger();
+    runner.execute(logger);
+    runner.dump_registers(logger);
+  } else start_repl(runner);
 }
 
 // Only drive the pipeline when this file is the process entrypoint. Library
 // consumers import the individual pipeline stages directly, and must not have
 // a REPL opened on their stdin as a side effect of doing so.
 if (require.main === module) {
-  main().catch((err: unknown) => {
+  root.execute(process.argv.slice(2)).catch((err: unknown) => {
     console.error(err);
     process.exitCode = 1;
   });
