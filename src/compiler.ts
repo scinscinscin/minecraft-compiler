@@ -1,4 +1,3 @@
-import { pretty_print } from ".";
 import {
   BasicBlock,
   compare_operands,
@@ -513,7 +512,6 @@ function determine_register_spill_count(graph: RegisterInterferenceGraph) {
 export function compile(context: FunctionCompilationContext, blocks: BasicBlock[], gpr_count: number): RelocatableUnit {
   // solve the register interferece graph
   const { graph, solution: register_solution } = constraint_registers(blocks, context, gpr_count);
-  pretty_print(blocks);
 
   // determine how many register spill locations we need
   const register_spillage_solution = determine_register_spill_count(graph);

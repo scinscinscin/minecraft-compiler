@@ -3,9 +3,7 @@ import path from "path";
 
 export default defineConfig({
   optimizeDeps: { exclude: ["compiler"], include: ["compiler"] },
-  resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
-  },
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
   test: {
     environment: "node",
     globals: true,
@@ -21,5 +19,4 @@ export default defineConfig({
       exclude: ["src/repl.ts", "src/index.ts"],
     },
   },
-  esbuild: { target: "es2017" },
 });

@@ -1,4 +1,3 @@
-import { pretty_print } from ".";
 import { RelocatableUnit } from "./compiler";
 import { TokenType } from "./lexer";
 import {
@@ -6,6 +5,7 @@ import {
   BinaryInstruction,
   compare_operands,
   ConditionalJump,
+  determine_dominators,
   FunctionCallInstruction,
   IRCode,
   JumpInstruction,
@@ -13,6 +13,7 @@ import {
   MoveInstruction,
   Operand,
   Phi,
+  stringify_operand,
   UnaryInstruction,
 } from "./intermediate";
 import { FunctionCompilationContext } from "./parser";
@@ -20,6 +21,7 @@ import { FunctionCompilationContext } from "./parser";
 export type OptimizationPassName =
   | "copy_propagation"
   | "constant_propagation"
+  | "loop_invariant_code_motion"
   | "common_subexpression_elimination"
   | "dead_code_elimination"
   | "statement_replacement"
@@ -29,6 +31,7 @@ export type OptimizationPassName =
 export const ALL_OPTIMIZATION_PASSES: OptimizationPassName[] = [
   "copy_propagation",
   "constant_propagation",
+  "loop_invariant_code_motion",
   "common_subexpression_elimination",
   "dead_code_elimination",
   "statement_replacement",
@@ -48,6 +51,7 @@ export function optimize(
     let changed = false;
     if (on("copy_propagation")) changed = changed || copy_propagation(fn_compile_context, cfg);
     if (on("constant_propagation")) changed = changed || constant_propagation(cfg, constant_cache);
+    if (on("loop_invariant_code_motion")) changed = changed || loop_invariant_code_motion(fn_compile_context, cfg);
     if (on("common_subexpression_elimination"))
       changed = changed || common_subexpression_elimination(fn_compile_context, cfg);
     if (on("dead_code_elimination")) changed = changed || dead_code_elimination(fn_compile_context, cfg);
@@ -135,6 +139,106 @@ function constant_propagation(cfg: BasicBlock[], cache: ConstantCache): boolean 
   }
 
   return changed;
+}
+
+/**
+ * Loop invariant code motion: hoist pure arithmetic instructions out of natural
+ * loops into the loop's preheader, when all of their operands are defined outside the loop.
+ */
+function loop_invariant_code_motion(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {
+  let changed = false;
+
+  const def_block = new Map<string, number>();
+  for (let i = 0; i < cfg.length; i++)
+    for (const instruction of cfg[i].instructions)
+      for (const output of instruction.get_outputs())
+        if (output.type !== "literal") def_block.set(stringify_operand(output), i);
+
+  const is_invariant = (instruction: IRCode, in_loop: Set<BasicBlock>): boolean => {
+    for (const input of instruction.get_inputs()) {
+      if (input.type === "literal") continue;
+      if (input.type !== "ssa_variable" && input.type !== "temp_reg") return false;
+
+      const defined_in = def_block.get(stringify_operand(input));
+      if (defined_in === undefined) return false;
+      if (in_loop.has(cfg[defined_in])) return false;
+    }
+
+    return true;
+  };
+
+  for (const loop of find_natural_loops(cfg)) {
+    const { header, in_loop } = loop;
+
+    // The preheader is the block that flows exclusively into the header.
+    // Any operand defined outside the loop dominates the header, and therefore
+    // the preheader, so hoisted instructions have their operands available there.
+    const preheader = cfg.find((x) => x.successors.length === 1 && x.successors[0] === header);
+    if (preheader == null) continue;
+
+    for (const block of cfg) {
+      if (!in_loop.has(block)) continue;
+
+      for (const instruction of block.instructions) {
+        if (
+          !(instruction instanceof BinaryInstruction) &&
+          !(instruction instanceof UnaryInstruction) &&
+          !(instruction instanceof MoveInstruction)
+        )
+          continue;
+
+        if (!is_invariant(instruction, in_loop)) continue;
+
+        changed = true;
+
+        // Remove the instruction from its current block and from the emitted IR
+        block.remove_instruction(instruction);
+        fn_compile_context.emitted.splice(fn_compile_context.emitted.indexOf(instruction), 1);
+
+        // Reinsert it right before the preheader's finalizing instruction
+        const finalizer = preheader.instructions[preheader.instructions.length - 1];
+        preheader.instructions.splice(preheader.instructions.indexOf(finalizer), 0, instruction);
+        fn_compile_context.emitted.splice(fn_compile_context.emitted.indexOf(finalizer), 0, instruction);
+      }
+    }
+  }
+
+  return changed;
+}
+
+// Finds the natural loops of the CFG: for each back edge (an edge whose target
+// dominates its source), the loop is the header plus every block that can reach
+// the edge's source without passing through the header.
+function find_natural_loops(cfg: BasicBlock[]): { header: BasicBlock; in_loop: Set<BasicBlock> }[] {
+  const dominators = determine_dominators(cfg);
+  const loops = [] as { header: BasicBlock; in_loop: Set<BasicBlock> }[];
+
+  for (let i = 0; i < cfg.length; i++) {
+    const block = cfg[i];
+    for (const successor of block.successors) {
+      const successor_index = cfg.indexOf(successor);
+      if (i === successor_index) continue;
+      if (dominators[i].includes(successor_index) === false) continue;
+
+      // Back edge found: successor is the loop header
+      const in_loop = new Set<BasicBlock>([successor, block]);
+      const worklist = [block];
+      while (worklist.length > 0) {
+        const current = worklist.pop()!;
+        for (const predecessor of cfg) {
+          if (predecessor.successors.includes(current) === false) continue;
+          if (in_loop.has(predecessor)) continue;
+
+          in_loop.add(predecessor);
+          worklist.push(predecessor);
+        }
+      }
+
+      loops.push({ header: successor, in_loop });
+    }
+  }
+
+  return loops;
 }
 
 function statement_replacement(fn_compile_context: FunctionCompilationContext, cfg: BasicBlock[]): boolean {

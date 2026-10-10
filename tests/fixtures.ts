@@ -131,6 +131,27 @@ function add(a: int, b: int): int {
     notes: "call/return plumbing through the return register",
   },
   {
+    name: "loop invariant code motion",
+    source: `
+function main(): int {
+  return loop_test(6, 7);
+}
+function loop_test(a: int, b: int): int {
+  var t: int = 0;
+  var i: int = 0;
+  var sum: int = 0;
+  while loop (i < 3) {
+    t = a + b;
+    sum = sum + t;
+    i = i + 1;
+  }
+  return sum;
+}
+`,
+    expected: 39,
+    notes: "t = a+b is loop-invariant (parameters aren't constant-folded) and should be hoisted out of the loop (3 * 13)",
+  },
+  {
     name: "while loop accumulator",
     source: `
 function main(): int {
