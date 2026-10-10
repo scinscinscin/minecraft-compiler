@@ -68,10 +68,11 @@ async function main(input_file: string, gpr_count: number, debug: boolean, optim
   const parserGenerator = Sparse.fromProductions<TokenType, TokenMetadata, BaseNode>({
     productions,
     toStringifiedTokenType,
+    mode: "lalr1",
   });
 
   const source_code = await fs.readFile(input_file, "utf8");
-  const lexer = lexerGenerator.generate(source_code, () => ({}));
+  const lexer = lexerGenerator.compile().generate(source_code, () => ({}));
   const parser = parserGenerator.generate(lexer, {
     reducer: ({ bag, name }) => {
       const reducer = Reducers[name ?? ""];
